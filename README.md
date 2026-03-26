@@ -10,6 +10,8 @@ Enter your portfolio value, planned annual spending, and guardrail thresholds, a
 - Calculate adjusted spending after a guardrail trigger, with an optional midpoint reset
 - Run a year-by-year portfolio projection and display it as a line chart
 
+<a href="https://gregdillon.github.io/gaurdrails_calcuator/" target="_blank">Try it out</a>
+
 ## Key features
 
 - **Symmetric guardrails** — keeps upper/lower thresholds equidistant from your initial withdrawal rate
