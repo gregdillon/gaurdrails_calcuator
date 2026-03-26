@@ -1,73 +1,31 @@
-# React + TypeScript + Vite
+# Guardrails Calculator
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A retirement withdrawal guardrails calculator based on the [Guyton-Klinger rules](https://www.kitces.com/blog/guyton-klinger-guardrails-retirement-spending-rules/).
 
-Currently, two official plugins are available:
+## What it does
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Enter your portfolio value, planned annual spending, and guardrail thresholds, and the app will:
 
-## React Compiler
+- Compute your current withdrawal rate and show your guardrail status (on track / cut / raise / extended cut / extended raise)
+- Calculate adjusted spending after a guardrail trigger, with an optional midpoint reset
+- Run a year-by-year portfolio projection and display it as a line chart
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Key features
 
-## Expanding the ESLint configuration
+- **Symmetric guardrails** — keeps upper/lower thresholds equidistant from your initial withdrawal rate
+- **Prosperity rule** (Guyton-Klinger 2006) — skips the annual inflation adjustment in years where the portfolio had a negative pre-withdrawal return
+- **Fixed income** — subtract Social Security, pension, or other fixed income from gross withdrawals before computing the portfolio draw rate, with optional COLA inflation adjustment
+- **Persistent settings** — inputs are saved to `localStorage` and restored on reload
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Stack
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+React 19 + TypeScript, bundled with Vite. Chart rendered with [Recharts](https://recharts.org). No routing, no state management library, no backend.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Commands
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run dev        # Start dev server (Vite HMR)
+npm run build      # Type-check then build for production
+npm run lint       # Run ESLint
+npm run preview    # Preview the production build locally
 ```
