@@ -299,7 +299,7 @@ export default function GuardrailsCalc() {
         {/* Portfolio & Withdrawals */}
         <SubHeading>Portfolio &amp; Withdrawals</SubHeading>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-          <NumInput label="Starting Portfolio Value" tip={TIPS.portfolio}  value={portfolio}  onChange={setPortfolio}  prefix="$" step={10000} min={0} />
+          <NumInput label="Current Portfolio Value" tip={TIPS.portfolio}  value={portfolio}  onChange={setPortfolio}  prefix="$" step={10000} min={0} />
 
           {/* Withdrawal with inflation adj + undo */}
           <div>
