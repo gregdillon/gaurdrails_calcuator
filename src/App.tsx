@@ -113,14 +113,6 @@ function NumInput({ label, tip, value, onChange, prefix, suffix, step = 1, min, 
 function Card({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   return <div style={{ background: "#fff", borderRadius: 12, padding: 22, border: "1px solid #e8e8e8", ...style }}>{children}</div>;
 }
-function SectionTitle({ children, sub }: { children: ReactNode; sub?: string }) {
-  return (
-    <div style={{ marginBottom: sub ? 4 : 18 }}>
-      <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>{children}</h2>
-      {sub && <p style={{ fontSize: 13, color: "#999", margin: "4px 0 16px" }}>{sub}</p>}
-    </div>
-  );
-}
 function SubHeading({ children }: { children: ReactNode }) {
   return <div style={{ fontSize: 11, fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>{children}</div>;
 }
