@@ -381,6 +381,21 @@ export default function GuardrailsCalc() {
               <NumInput label="Lower Guardrail"     tip={TIPS.lower}  value={lower}  onChange={setLower}  suffix="%" step={0.1} min={0} max={25} />
               <NumInput label="Standard Adjustment" tip={TIPS.adjust} value={adjust} onChange={setAdjust} suffix="%" step={1}   min={1} max={50} />
             </div>
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => { if (!symmetric) { setUpperRaw(parseFloat((initialRate * 1.2).toFixed(2))); setLowerRaw(parseFloat((initialRate * 0.8).toFixed(2))); } }}
+                disabled={symmetric}
+                style={{ padding: "4px 12px", fontSize: 12, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e2e2", background: symmetric ? "#f9f9f9" : "#fff", color: symmetric ? "#bbb" : "#555", cursor: symmetric ? "not-allowed" : "pointer" }}
+                onMouseEnter={e => { if (!symmetric) { e.currentTarget.style.background = "#eff6ff"; e.currentTarget.style.borderColor = "#bfdbfe"; e.currentTarget.style.color = "#2563eb"; } }}
+                onMouseLeave={e => { if (!symmetric) { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#e2e2e2"; e.currentTarget.style.color = "#555"; } }}>
+                Reset to ±20% of initial rate
+              </button>
+              {symmetric && (
+                <span style={{ fontSize: 12, color: "#b91c1c", display: "flex", alignItems: "center", gap: 4 }}>
+                  ⚠ Turn off Symmetrical Guardrails first
+                </span>
+              )}
+            </div>
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <Toggle value={symmetric} onChange={handleSymmetricToggle} />
