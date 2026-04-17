@@ -14,10 +14,20 @@ const DEFAULTS = {
   symmetric: true, prosperity: true,
   currentAge: 65, planToAge: 90,
   fixedIncome: 0, fixedIncomeInflation: false,
+  prevPortfolio: 0,
 };
 
 const STORAGE_KEY = "guardrails_calc_settings";
+const HISTORY_KEY = "guardrails_calc_history";
 type Settings = typeof DEFAULTS;
+
+type HistoryRecord = {
+  date: string;
+  portfolio: number;
+  prevPortfolio: number;
+  withdrawal: number;
+  rate: number;
+};
 
 function loadSaved(): Settings {
   try {
@@ -26,6 +36,15 @@ function loadSaved(): Settings {
     return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {
     return DEFAULTS;
+  }
+}
+
+function loadHistory(): HistoryRecord[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
   }
 }
 
@@ -46,6 +65,7 @@ const TIPS = {
   planToAge:            "The age through which your portfolio needs to last. Determines the length of the projection.",
   fixedIncome:          "Monthly income from Social Security, a pension, or other fixed sources. Reduces how much your portfolio needs to provide each year.",
   fixedIncomeInflation: "When enabled, your fixed income grows with inflation each year — similar to a cost-of-living adjustment (COLA) on Social Security.",
+  prevPortfolio:        "Your portfolio's starting value at the beginning of last year. Used to determine whether the portfolio declined — which blocks the annual inflation adjustment per the Guyton-Klinger Prosperity Rule.",
 };
 
 function TooltipIcon({ tip }: { tip: string }) {
@@ -148,9 +168,13 @@ export default function GuardrailsCalc() {
   const [planToAge,             setPlanToAge]             = useState(() => loadSaved().planToAge);
   const [fixedIncome,           setFixedIncome]           = useState(() => loadSaved().fixedIncome);
   const [fixedIncomeInflation,  setFixedIncomeInflation]  = useState(() => loadSaved().fixedIncomeInflation);
+  const [prevPortfolio,         setPrevPortfolio]         = useState(() => loadSaved().prevPortfolio);
   const [prevWithdrawal,        setPrevWithdrawal]        = useState<number | null>(null);
   const [savedFlash,            setSavedFlash]            = useState(false);
+  const [finalizeFlash,         setFinalizeFlash]         = useState(false);
   const [guardrailsOpen,        setGuardrailsOpen]        = useState(false);
+  const [history,               setHistory]               = useState<HistoryRecord[]>(loadHistory);
+  const [confirmDeleteIdx,      setConfirmDeleteIdx]      = useState<number | null>(null);
 
   const setPortfolio = (v: number) => { setPortfolioRaw(v); setSim(v); };
   const setWithdrawal = (v: number) => { setWithdrawalRaw(v); setPrevWithdrawal(null); };
@@ -176,7 +200,7 @@ export default function GuardrailsCalc() {
       portfolio, withdrawal, upper, lower, adjust,
       extWidth, extAdjust, ret, inf,
       symmetric, prosperity, currentAge, planToAge,
-      fixedIncome, fixedIncomeInflation,
+      fixedIncome, fixedIncomeInflation, prevPortfolio,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
     setSavedFlash(true);
@@ -201,12 +225,47 @@ export default function GuardrailsCalc() {
     setPlanToAge(DEFAULTS.planToAge);
     setFixedIncome(DEFAULTS.fixedIncome);
     setFixedIncomeInflation(DEFAULTS.fixedIncomeInflation);
+    setPrevPortfolio(DEFAULTS.prevPortfolio);
     setPrevWithdrawal(null);
   };
 
   const netPortfolioWithdrawal = Math.max(0, withdrawal - annualFixed);
-  const simRate     = sim > 0 ? (netPortfolioWithdrawal / sim) * 100 : 0;
-  const guardStatus = getStatus(simRate, lower, upper, extWidth);
+  const simRate        = sim > 0 ? (netPortfolioWithdrawal / sim) * 100 : 0;
+  const actualRate     = portfolio > 0 ? (netPortfolioWithdrawal / portfolio) * 100 : 0;
+  const guardStatus    = getStatus(simRate, lower, upper, extWidth);
+  const actualStatus   = getStatus(actualRate, lower, upper, extWidth);
+  const portfolioDeclined = prevPortfolio > 0 && portfolio < prevPortfolio;
+
+  const handleFinalize = () => {
+    const record: HistoryRecord = {
+      date: new Date().toISOString(),
+      portfolio,
+      prevPortfolio,
+      withdrawal,
+      rate: actualRate,
+    };
+    const newHistory = [...history, record];
+    setHistory(newHistory);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory));
+    // Advance previous portfolio for next year and persist
+    setPrevPortfolio(portfolio);
+    const settings: Settings = {
+      portfolio, withdrawal, upper, lower, adjust,
+      extWidth, extAdjust, ret, inf,
+      symmetric, prosperity, currentAge, planToAge,
+      fixedIncome, fixedIncomeInflation, prevPortfolio: portfolio,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    setFinalizeFlash(true);
+    setTimeout(() => setFinalizeFlash(false), 2500);
+  };
+
+  const handleDeleteHistory = (idx: number) => {
+    const newHistory = history.filter((_, i) => i !== idx);
+    setHistory(newHistory);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory));
+    setConfirmDeleteIdx(null);
+  };
   const adjPct      = (guardStatus === "extCut" || guardStatus === "extRaise") ? extAdjust : adjust;
 
   // Guardrail adjusts total spending; net draw recalculated
@@ -271,6 +330,7 @@ export default function GuardrailsCalc() {
           <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Settings</h2>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {savedFlash && <span style={{ fontSize: 12, color: "#16a34a", fontWeight: 600 }}>✓ Saved</span>}
+            {finalizeFlash && <span style={{ fontSize: 12, color: "#0369a1", fontWeight: 600 }}>✓ Finalized &amp; recorded</span>}
             <button onClick={handleReset}
               style={{ padding: "5px 13px", fontSize: 12.5, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e2e2", background: "#fff", color: "#666", cursor: "pointer" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#fef2f2"; e.currentTarget.style.borderColor = "#fecaca"; e.currentTarget.style.color = "#b91c1c"; }}
@@ -282,6 +342,13 @@ export default function GuardrailsCalc() {
               onMouseEnter={e => { e.currentTarget.style.background = "#dbeafe"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "#eff6ff"; }}>
               Save
+            </button>
+            <button onClick={handleFinalize} disabled={actualStatus !== "ok"}
+              title={actualStatus !== "ok" ? "Spending must be within guardrails before finalizing" : "Record this year's plan and advance previous portfolio value"}
+              style={{ padding: "5px 13px", fontSize: 12.5, fontWeight: 600, borderRadius: 6, border: actualStatus !== "ok" ? "1px solid #e2e2e2" : "1px solid #bae6fd", background: actualStatus !== "ok" ? "#f3f4f6" : "#0ea5e9", color: actualStatus !== "ok" ? "#aaa" : "#fff", cursor: actualStatus !== "ok" ? "not-allowed" : "pointer" }}
+              onMouseEnter={e => { if (actualStatus === "ok") e.currentTarget.style.background = "#0284c7"; }}
+              onMouseLeave={e => { if (actualStatus === "ok") e.currentTarget.style.background = "#0ea5e9"; }}>
+              Finalize Year
             </button>
           </div>
         </div>
@@ -300,7 +367,8 @@ export default function GuardrailsCalc() {
         {/* Portfolio & Withdrawals */}
         <SubHeading>Portfolio &amp; Withdrawals</SubHeading>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-          <NumInput label="Current Portfolio Value" tip={TIPS.portfolio}  value={portfolio}  onChange={setPortfolio}  prefix="$" step={10000} min={0} />
+          <NumInput label="Current Portfolio Value"       tip={TIPS.portfolio}     value={portfolio}     onChange={setPortfolio}     prefix="$" step={10000} min={0} />
+          <NumInput label="Previous Year Portfolio Value" tip={TIPS.prevPortfolio} value={prevPortfolio} onChange={setPrevPortfolio} prefix="$" step={10000} min={0} />
 
           {/* Withdrawal with inflation adj + undo */}
           <div>
@@ -315,15 +383,20 @@ export default function GuardrailsCalc() {
                 style={{ flex: 1, border: "none", padding: "9px 10px", fontSize: 14, outline: "none", background: "transparent", width: 0 }} />
             </div>
             <div style={{ marginTop: 6, display: "flex", gap: 6, alignItems: "center" }}>
-              {[{ dir: 1, label: `＋${inf}%`, title: `Increase by ${inf}% inflation`, hoverBg: "#f0fdf4", hoverColor: "#16a34a", hoverBorder: "#86efac" }
-              ].map(({ dir, label, title, hoverBg, hoverColor, hoverBorder }) => (
-                <button key={dir} onClick={() => handleInflationAdj(dir)} title={title}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "transparent", border: "1px solid #e2e2e2", borderRadius: 6, padding: "3px 9px", fontSize: 11.5, color: "#888", cursor: "pointer", fontWeight: 500, transition: "all 0.15s" }}
-                  onMouseEnter={e => { e.currentTarget.style.background = hoverBg; e.currentTarget.style.color = hoverColor; e.currentTarget.style.borderColor = hoverBorder; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#e2e2e2"; }}>
-                  {label}
-                </button>
-              ))}
+              <button
+                onClick={() => { if (!portfolioDeclined) handleInflationAdj(1); }}
+                disabled={portfolioDeclined}
+                title={portfolioDeclined ? `Portfolio declined from ${fmtMoney(prevPortfolio)} — Prosperity Rule blocks inflation adjustment` : `Increase by ${inf}% inflation`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "transparent", border: "1px solid #e2e2e2", borderRadius: 6, padding: "3px 9px", fontSize: 11.5, color: portfolioDeclined ? "#ccc" : "#888", cursor: portfolioDeclined ? "not-allowed" : "pointer", fontWeight: 500, transition: "all 0.15s" }}
+                onMouseEnter={e => { if (!portfolioDeclined) { e.currentTarget.style.background = "#f0fdf4"; e.currentTarget.style.color = "#16a34a"; e.currentTarget.style.borderColor = "#86efac"; } }}
+                onMouseLeave={e => { if (!portfolioDeclined) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#e2e2e2"; } }}>
+                ＋{inf}%
+              </button>
+              {portfolioDeclined && (
+                <span style={{ fontSize: 11, color: "#b91c1c", display: "flex", alignItems: "center", gap: 3 }}>
+                  ⚠ Portfolio declined — no inflation adj. (Prosperity Rule)
+                </span>
+              )}
               {prevWithdrawal !== null && (
                 <button onClick={handleUndo} title="Undo last inflation adjustment"
                   style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#fef9ec", border: "1px solid #fde68a", borderRadius: 6, padding: "3px 9px", fontSize: 11.5, color: "#92400e", cursor: "pointer", fontWeight: 500, transition: "all 0.15s" }}
@@ -364,6 +437,52 @@ export default function GuardrailsCalc() {
           </>}
         </div>
       </Card>
+
+      {/* ── ANNUAL HISTORY ── */}
+      {history.length > 0 && (
+        <Card style={{ marginBottom: 18 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 650, margin: "0 0 16px", color: "#222" }}>Annual History</h2>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #e8e8e8" }}>
+                  {["Date", "Portfolio", "Prev Portfolio", "Annual Spending", "Rate", ""].map(h => (
+                    <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontWeight: 600, color: "#888", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((r, i) => {
+                  const declined = r.prevPortfolio > 0 && r.portfolio < r.prevPortfolio;
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid #f4f4f4" }}>
+                      <td style={{ padding: "8px 10px", color: "#555", whiteSpace: "nowrap" }}>{new Date(r.date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</td>
+                      <td style={{ padding: "8px 10px", fontWeight: 600 }}>{fmtMoney(r.portfolio)}</td>
+                      <td style={{ padding: "8px 10px", color: declined ? "#b91c1c" : "#555" }}>{r.prevPortfolio > 0 ? fmtMoney(r.prevPortfolio) : "—"}{declined && " ▼"}</td>
+                      <td style={{ padding: "8px 10px" }}>{fmtMoney(r.withdrawal)}</td>
+                      <td style={{ padding: "8px 10px", color: "#555" }}>{r.rate.toFixed(2)}%</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
+                        {confirmDeleteIdx === i ? (
+                          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                            <span style={{ fontSize: 11.5, color: "#b91c1c" }}>Delete?</span>
+                            <button onClick={() => handleDeleteHistory(i)}
+                              style={{ padding: "2px 8px", fontSize: 11.5, fontWeight: 600, borderRadius: 5, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", cursor: "pointer" }}>Yes</button>
+                            <button onClick={() => setConfirmDeleteIdx(null)}
+                              style={{ padding: "2px 8px", fontSize: 11.5, fontWeight: 500, borderRadius: 5, border: "1px solid #e2e2e2", background: "#fff", color: "#666", cursor: "pointer" }}>No</button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setConfirmDeleteIdx(i)}
+                            style={{ padding: "2px 8px", fontSize: 11.5, borderRadius: 5, border: "1px solid #e2e2e2", background: "#fff", color: "#aaa", cursor: "pointer" }}>Delete</button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       {/* ── GUARDRAIL ZONES (collapsible) ── */}
       <Card style={{ marginBottom: 18 }}>
