@@ -164,6 +164,11 @@ export default function GuardrailsCalc() {
   const [prevWithdrawal,        setPrevWithdrawal]        = useState<number | null>(null);
   const [savedFlash,            setSavedFlash]            = useState(false);
   const [finalizeFlash,         setFinalizeFlash]         = useState(false);
+  const [showImportExport,      setShowImportExport]      = useState(false);
+  const [importTab,             setImportTab]             = useState<"export" | "import">("export");
+  const [importText,            setImportText]            = useState("");
+  const [importError,           setImportError]           = useState("");
+  const [copyFlash,             setCopyFlash]             = useState(false);
   const [guardrailsOpen,        setGuardrailsOpen]        = useState(false);
   const [simulatorOpen,         setSimulatorOpen]         = useState(false);
   const [horizonOpen,           setHorizonOpen]           = useState(false);
@@ -173,6 +178,16 @@ export default function GuardrailsCalc() {
 
   const setPortfolio = (v: number) => { setPortfolioRaw(v); setSim(v); };
   const setWithdrawal = (v: number) => { setWithdrawalRaw(v); setPrevWithdrawal(null); };
+
+  const applySettings = (s: Settings) => {
+    setPortfolioRaw(s.portfolio); setSim(s.portfolio);
+    setWithdrawalRaw(s.withdrawal); setUpperRaw(s.upper); setLowerRaw(s.lower);
+    setAdjust(s.adjust); setExtWidth(s.extWidth); setExtAdjust(s.extAdjust);
+    setRet(s.ret); setInf(s.inf); setSymmetric(s.symmetric); setProsperity(s.prosperity);
+    setCurrentAge(s.currentAge); setPlanToAge(s.planToAge);
+    setFixedIncome(s.fixedIncome); setFixedIncomeInflation(s.fixedIncomeInflation);
+    setPrevPortfolio(s.prevPortfolio); setPrevWithdrawal(null);
+  };
 
   const handleInflationAdj = (dir: number) => {
     setPrevWithdrawal(withdrawal);
@@ -203,25 +218,50 @@ export default function GuardrailsCalc() {
   };
 
   const handleReset = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    setPortfolioRaw(DEFAULTS.portfolio);
-    setSim(DEFAULTS.portfolio);
-    setWithdrawalRaw(DEFAULTS.withdrawal);
-    setUpperRaw(DEFAULTS.upper);
-    setLowerRaw(DEFAULTS.lower);
-    setAdjust(DEFAULTS.adjust);
-    setExtWidth(DEFAULTS.extWidth);
-    setExtAdjust(DEFAULTS.extAdjust);
-    setRet(DEFAULTS.ret);
-    setInf(DEFAULTS.inf);
-    setSymmetric(DEFAULTS.symmetric);
-    setProsperity(DEFAULTS.prosperity);
-    setCurrentAge(DEFAULTS.currentAge);
-    setPlanToAge(DEFAULTS.planToAge);
-    setFixedIncome(DEFAULTS.fixedIncome);
-    setFixedIncomeInflation(DEFAULTS.fixedIncomeInflation);
-    setPrevPortfolio(DEFAULTS.prevPortfolio);
-    setPrevWithdrawal(null);
+    applySettings(loadSaved());
+  };
+
+  const currentSettings = (): Settings => ({
+    portfolio, withdrawal, upper, lower, adjust,
+    extWidth, extAdjust, ret, inf,
+    symmetric, prosperity, currentAge, planToAge,
+    fixedIncome, fixedIncomeInflation, prevPortfolio,
+  });
+
+  const exportJson = () => JSON.stringify({ settings: currentSettings(), history }, null, 2);
+
+  const handleExportCopy = async () => {
+    await navigator.clipboard.writeText(exportJson());
+    setCopyFlash(true);
+    setTimeout(() => setCopyFlash(false), 2000);
+  };
+
+  const handleExportDownload = () => {
+    const blob = new Blob([exportJson()], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "guardrails-calc.json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = () => {
+    try {
+      const parsed = JSON.parse(importText);
+      if (parsed.settings) {
+        const s: Settings = { ...DEFAULTS, ...parsed.settings };
+        applySettings(s);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+      }
+      if (Array.isArray(parsed.history)) {
+        setHistory(parsed.history);
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(parsed.history));
+      }
+      setImportError("");
+      setImportText("");
+      setShowImportExport(false);
+    } catch {
+      setImportError("Invalid JSON — please check your input and try again.");
+    }
   };
 
   const netPortfolioWithdrawal = Math.max(0, withdrawal - annualFixed);
@@ -344,6 +384,12 @@ export default function GuardrailsCalc() {
               onMouseEnter={e => { e.currentTarget.style.background = "#dbeafe"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "#eff6ff"; }}>
               Save
+            </button>
+            <button onClick={() => { setImportTab("export"); setImportText(""); setImportError(""); setShowImportExport(true); }}
+              style={{ padding: "5px 13px", fontSize: 12.5, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#f1f5f9"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "#f8fafc"; }}>
+              Import / Export
             </button>
             <button onClick={handleFinalize} disabled={actualStatus !== "ok"}
               title={actualStatus !== "ok" ? "Spending must be within guardrails before finalizing" : "Record this year's plan and advance previous portfolio value"}
@@ -792,6 +838,58 @@ export default function GuardrailsCalc() {
       </Card>
 
       <p style={{ fontSize: 12, color: "#ccc", textAlign: "center", marginTop: 20 }}>For educational purposes only · Not financial advice</p>
+
+      {showImportExport && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget) setShowImportExport(false); }}>
+          <div style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 520, boxShadow: "0 20px 60px rgba(0,0,0,0.25)", overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 22px 0" }}>
+              <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Import / Export</h2>
+              <button onClick={() => setShowImportExport(false)}
+                style={{ background: "none", border: "none", fontSize: 20, color: "#aaa", cursor: "pointer", lineHeight: 1, padding: "0 4px" }}>×</button>
+            </div>
+            <div style={{ display: "flex", gap: 0, padding: "14px 22px 0", borderBottom: "1px solid #f0f0f0" }}>
+              {(["export", "import"] as const).map(tab => (
+                <button key={tab} onClick={() => { setImportTab(tab); setImportError(""); }}
+                  style={{ padding: "7px 18px", fontSize: 13, fontWeight: importTab === tab ? 600 : 400, borderRadius: "7px 7px 0 0", border: "none", background: importTab === tab ? "#fff" : "transparent", color: importTab === tab ? "#1a1a1a" : "#888", cursor: "pointer", borderBottom: importTab === tab ? "2px solid #2563eb" : "2px solid transparent", marginBottom: -1 }}>
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div style={{ padding: "20px 22px 22px" }}>
+              {importTab === "export" ? (
+                <>
+                  <p style={{ fontSize: 13, color: "#666", margin: "0 0 12px", lineHeight: 1.5 }}>Copy or download your current settings and history as JSON.</p>
+                  <textarea readOnly value={exportJson()}
+                    style={{ width: "100%", height: 200, fontFamily: "monospace", fontSize: 12, border: "1px solid #e2e2e2", borderRadius: 8, padding: 10, resize: "none", background: "#f8fafc", color: "#374151", boxSizing: "border-box" }} />
+                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                    <button onClick={handleExportCopy}
+                      style={{ flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 500, borderRadius: 7, border: "1px solid #bfdbfe", background: copyFlash ? "#dcfce7" : "#eff6ff", color: copyFlash ? "#16a34a" : "#2563eb", cursor: "pointer" }}>
+                      {copyFlash ? "✓ Copied!" : "Copy to Clipboard"}
+                    </button>
+                    <button onClick={handleExportDownload}
+                      style={{ flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 500, borderRadius: 7, border: "1px solid #e2e2e2", background: "#fff", color: "#444", cursor: "pointer" }}>
+                      Download .json
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p style={{ fontSize: 13, color: "#666", margin: "0 0 12px", lineHeight: 1.5 }}>Paste a previously exported JSON file to restore settings and history.</p>
+                  <textarea value={importText} onChange={e => { setImportText(e.target.value); setImportError(""); }}
+                    placeholder='Paste exported JSON here…'
+                    style={{ width: "100%", height: 200, fontFamily: "monospace", fontSize: 12, border: `1px solid ${importError ? "#fca5a5" : "#e2e2e2"}`, borderRadius: 8, padding: 10, resize: "none", background: "#fff", color: "#374151", boxSizing: "border-box" }} />
+                  {importError && <div style={{ fontSize: 12.5, color: "#b91c1c", marginTop: 6 }}>{importError}</div>}
+                  <button onClick={handleImport} disabled={!importText.trim()}
+                    style={{ width: "100%", marginTop: 12, padding: "9px 0", fontSize: 13, fontWeight: 600, borderRadius: 7, border: "none", background: importText.trim() ? "#2563eb" : "#e5e7eb", color: importText.trim() ? "#fff" : "#9ca3af", cursor: importText.trim() ? "pointer" : "not-allowed" }}>
+                    Import
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
