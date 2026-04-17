@@ -420,34 +420,6 @@ export default function GuardrailsCalc() {
 
       {/* ── SIMULATOR ── */}
       <Card style={{ marginBottom: 18 }}>
-        <SectionTitle sub="Drag the slider to simulate portfolio value changes. The calculator shows which zone your withdrawal rate falls in and the appropriate spending response.">
-          Guardrail Simulator
-        </SectionTitle>
-
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 7 }}>
-            <span style={{ color: "#aaa" }}>{fmtShort(portfolio * 0.5)}</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>{fmtMoney(sim)}</span>
-              {sim !== portfolio && (
-                <button onClick={() => setSim(portfolio)} title="Reset to starting portfolio value"
-                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%", border: "1px solid #e2e2e2", background: "#fff", color: "#888", fontSize: 13, cursor: "pointer", lineHeight: 1, transition: "all 0.15s", padding: 0 }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "#eff6ff"; e.currentTarget.style.color = "#2563eb"; e.currentTarget.style.borderColor = "#bfdbfe"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#e2e2e2"; }}>
-                  ↺
-                </button>
-              )}
-            </div>
-            <span style={{ color: "#aaa" }}>{fmtShort(portfolio * 1.5)}</span>
-          </div>
-          <input type="range" min={portfolio * 0.5} max={portfolio * 1.5} step={portfolio * 0.005}
-            value={sim} onChange={e => setSim(+e.target.value)}
-            style={{ width: "100%", accentColor: "#2563eb", cursor: "pointer", height: 6 }} />
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#ccc", marginTop: 3 }}>
-            <span>← Market Decline</span><span>Market Growth →</span>
-          </div>
-        </div>
-
         <div style={{ marginBottom: 18 }}>
           <div style={{ fontSize: 12.5, color: "#666", marginBottom: 7 }}>
             Withdrawal Rate: <strong style={{ color: "#1a1a1a" }}>{fmtPct(simRate)}</strong>
@@ -526,6 +498,36 @@ export default function GuardrailsCalc() {
             </div>
           </div>
         )}
+
+        <Divider />
+
+        <SectionTitle sub="Drag the slider to simulate portfolio value changes. The calculator shows which zone your withdrawal rate falls in and the appropriate spending response.">
+          Guardrail Simulator
+        </SectionTitle>
+
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 7 }}>
+            <span style={{ color: "#aaa" }}>{fmtShort(portfolio * 0.5)}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>{fmtMoney(sim)}</span>
+              {sim !== portfolio && (
+                <button onClick={() => setSim(portfolio)} title="Reset to starting portfolio value"
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%", border: "1px solid #e2e2e2", background: "#fff", color: "#888", fontSize: 13, cursor: "pointer", lineHeight: 1, transition: "all 0.15s", padding: 0 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "#eff6ff"; e.currentTarget.style.color = "#2563eb"; e.currentTarget.style.borderColor = "#bfdbfe"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#e2e2e2"; }}>
+                  ↺
+                </button>
+              )}
+            </div>
+            <span style={{ color: "#aaa" }}>{fmtShort(portfolio * 1.5)}</span>
+          </div>
+          <input type="range" min={portfolio * 0.5} max={portfolio * 1.5} step={portfolio * 0.005}
+            value={sim} onChange={e => setSim(+e.target.value)}
+            style={{ width: "100%", accentColor: "#2563eb", cursor: "pointer", height: 6 }} />
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#ccc", marginTop: 3 }}>
+            <span>← Market Decline</span><span>Market Growth →</span>
+          </div>
+        </div>
       </Card>
 
       {/* ── RETIREMENT HORIZON & FIXED INCOME ── */}
