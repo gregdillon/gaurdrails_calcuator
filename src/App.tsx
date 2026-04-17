@@ -150,6 +150,7 @@ export default function GuardrailsCalc() {
   const [fixedIncomeInflation,  setFixedIncomeInflation]  = useState(() => loadSaved().fixedIncomeInflation);
   const [prevWithdrawal,        setPrevWithdrawal]        = useState<number | null>(null);
   const [savedFlash,            setSavedFlash]            = useState(false);
+  const [guardrailsOpen,        setGuardrailsOpen]        = useState(false);
 
   const setPortfolio = (v: number) => { setPortfolioRaw(v); setSim(v); };
   const setWithdrawal = (v: number) => { setWithdrawalRaw(v); setPrevWithdrawal(null); };
@@ -334,80 +335,7 @@ export default function GuardrailsCalc() {
             </div>
           </div>
 
-          <NumInput label="Expected Annual Return" tip={TIPS.ret} value={ret} onChange={setRet} suffix="%" step={0.25} min={0} max={25} />
-          <NumInput label="Inflation Rate"         tip={TIPS.inf} value={inf} onChange={setInf} suffix="%" step={0.1}  min={0} max={15} />
-        </div>
-
-        <Divider />
-
-        {/* Ages */}
-        <SubHeading>Retirement Horizon</SubHeading>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-          <NumInput label="Current Age"  tip={TIPS.currentAge} value={currentAge} onChange={setCurrentAge} suffix="yrs" step={1} min={40} max={90} />
-          <NumInput label="Plan to Age"  tip={TIPS.planToAge}  value={planToAge}  onChange={setPlanToAge}  suffix="yrs" step={1} min={50} max={110} />
-        </div>
-        {!invalidAges && (
-          <div style={{ marginTop: 10, fontSize: 12.5, color: "#888" }}>
-            Projection spans <strong style={{ color: "#444" }}>{projectionYears} years</strong> — age {currentAge} to {planToAge}
-          </div>
-        )}
-
-        <Divider />
-
-        {/* Fixed Income */}
-        <SubHeading>Fixed Income</SubHeading>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px", marginBottom: 12 }}>
-          <NumInput label="Monthly Fixed Income" tip={TIPS.fixedIncome} value={fixedIncome} onChange={setFixedIncome} prefix="$" step={100} min={0} />
-        </div>
-        {fixedIncome > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <Toggle value={fixedIncomeInflation} onChange={setFixedIncomeInflation} />
-            <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Inflation-adjusted (COLA) <TooltipIcon tip={TIPS.fixedIncomeInflation} /></span>
-          </div>
-        )}
-
-        <Divider />
-
-        {/* Guardrail Zones */}
-        <SubHeading>Guardrail Zones</SubHeading>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-          <NumInput label="Upper Guardrail"     tip={TIPS.upper}  value={upper}  onChange={setUpper}  suffix="%" step={0.1} min={0} max={25} />
-          <NumInput label="Lower Guardrail"     tip={TIPS.lower}  value={lower}  onChange={setLower}  suffix="%" step={0.1} min={0} max={25} />
-          <NumInput label="Standard Adjustment" tip={TIPS.adjust} value={adjust} onChange={setAdjust} suffix="%" step={1}   min={1} max={50} />
-        </div>
-        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <Toggle value={symmetric} onChange={handleSymmetricToggle} />
-            <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Symmetrical Guardrails <TooltipIcon tip={TIPS.symmetric} /></span>
-            {symmetric && <span style={{ fontSize: 12, color: "#2563eb", background: "#eff6ff", padding: "2px 9px", borderRadius: 20, border: "1px solid #bfdbfe" }}>±{(upper - initialRate).toFixed(2)}% from {fmtPct(initialRate)}</span>}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <Toggle value={prosperity} onChange={setProsperity} />
-            <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Prosperity Rule (Guyton-Klinger) <TooltipIcon tip={TIPS.prosperity} /></span>
-            {prosperity && <span style={{ fontSize: 12, color: "#6b7280", background: "#f3f4f6", padding: "2px 9px", borderRadius: 20, border: "1px solid #e5e7eb" }}>Skip inflation adj. in down-return years</span>}
-          </div>
-        </div>
-
-        <Divider />
-
-        {/* Extended Zones */}
-        <SubHeading>Extended Zones <span style={{ fontWeight: 400, color: "#bbb", textTransform: "none", letterSpacing: 0 }}>— larger adjustments for severe portfolio moves</span></SubHeading>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-          <NumInput label="Extended Zone Width"      tip={TIPS.extWidth}  value={extWidth}  onChange={setExtWidth}  suffix="%" step={0.1} min={0.1} max={10} />
-          <NumInput label="Extended Zone Adjustment" tip={TIPS.extAdjust} value={extAdjust} onChange={setExtAdjust} suffix="%" step={1}   min={1}   max={75} />
-        </div>
-        <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, alignItems: "center" }}>
-          {[
-            { color: "#15803d", bg: "#dcfce7", label: `< ${fmtPct(extLower)} Extended raise` },
-            { color: "#16a34a", bg: "#bbf7d0", label: `${fmtPct(extLower)}–${fmtPct(lower)} Raise` },
-            { color: "#1d6fbf", bg: "#dbeafe", label: `${fmtPct(lower)}–${fmtPct(upper)} Safe zone` },
-            { color: "#b91c1c", bg: "#fecaca", label: `${fmtPct(upper)}–${fmtPct(extUpper)} Cut` },
-            { color: "#7f1d1d", bg: "#fca5a5", label: `> ${fmtPct(extUpper)} Extended cut` },
-          ].map(z => (
-            <span key={z.label} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 20, background: z.bg, color: z.color, fontWeight: 500 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: z.color, flexShrink: 0 }} />{z.label}
-            </span>
-          ))}
+          <NumInput label="Inflation Rate" tip={TIPS.inf} value={inf} onChange={setInf} suffix="%" step={0.1} min={0} max={15} />
         </div>
 
         {/* Summary strip */}
@@ -435,6 +363,59 @@ export default function GuardrailsCalc() {
             </div>
           </>}
         </div>
+      </Card>
+
+      {/* ── GUARDRAIL ZONES (collapsible) ── */}
+      <Card style={{ marginBottom: 18 }}>
+        <button onClick={() => setGuardrailsOpen(o => !o)}
+          style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+          <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Guardrail Zones &amp; Extended Zones</h2>
+          <span style={{ fontSize: 12, color: "#aaa", transform: guardrailsOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>▼</span>
+        </button>
+        {guardrailsOpen && (
+          <>
+            <Divider />
+            <SubHeading>Guardrail Zones</SubHeading>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
+              <NumInput label="Upper Guardrail"     tip={TIPS.upper}  value={upper}  onChange={setUpper}  suffix="%" step={0.1} min={0} max={25} />
+              <NumInput label="Lower Guardrail"     tip={TIPS.lower}  value={lower}  onChange={setLower}  suffix="%" step={0.1} min={0} max={25} />
+              <NumInput label="Standard Adjustment" tip={TIPS.adjust} value={adjust} onChange={setAdjust} suffix="%" step={1}   min={1} max={50} />
+            </div>
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <Toggle value={symmetric} onChange={handleSymmetricToggle} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Symmetrical Guardrails <TooltipIcon tip={TIPS.symmetric} /></span>
+                {symmetric && <span style={{ fontSize: 12, color: "#2563eb", background: "#eff6ff", padding: "2px 9px", borderRadius: 20, border: "1px solid #bfdbfe" }}>±{(upper - initialRate).toFixed(2)}% from {fmtPct(initialRate)}</span>}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <Toggle value={prosperity} onChange={setProsperity} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Prosperity Rule (Guyton-Klinger) <TooltipIcon tip={TIPS.prosperity} /></span>
+                {prosperity && <span style={{ fontSize: 12, color: "#6b7280", background: "#f3f4f6", padding: "2px 9px", borderRadius: 20, border: "1px solid #e5e7eb" }}>Skip inflation adj. in down-return years</span>}
+              </div>
+            </div>
+
+            <Divider />
+
+            <SubHeading>Extended Zones <span style={{ fontWeight: 400, color: "#bbb", textTransform: "none", letterSpacing: 0 }}>— larger adjustments for severe portfolio moves</span></SubHeading>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
+              <NumInput label="Extended Zone Width"      tip={TIPS.extWidth}  value={extWidth}  onChange={setExtWidth}  suffix="%" step={0.1} min={0.1} max={10} />
+              <NumInput label="Extended Zone Adjustment" tip={TIPS.extAdjust} value={extAdjust} onChange={setExtAdjust} suffix="%" step={1}   min={1}   max={75} />
+            </div>
+            <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, alignItems: "center" }}>
+              {[
+                { color: "#15803d", bg: "#dcfce7", label: `< ${fmtPct(extLower)} Extended raise` },
+                { color: "#16a34a", bg: "#bbf7d0", label: `${fmtPct(extLower)}–${fmtPct(lower)} Raise` },
+                { color: "#1d6fbf", bg: "#dbeafe", label: `${fmtPct(lower)}–${fmtPct(upper)} Safe zone` },
+                { color: "#b91c1c", bg: "#fecaca", label: `${fmtPct(upper)}–${fmtPct(extUpper)} Cut` },
+                { color: "#7f1d1d", bg: "#fca5a5", label: `> ${fmtPct(extUpper)} Extended cut` },
+              ].map(z => (
+                <span key={z.label} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 20, background: z.bg, color: z.color, fontWeight: 500 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: z.color, flexShrink: 0 }} />{z.label}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
       </Card>
 
       {/* ── SIMULATOR ── */}
@@ -543,6 +524,34 @@ export default function GuardrailsCalc() {
                 Apply Midpoint Reset
               </button>
             </div>
+          </div>
+        )}
+      </Card>
+
+      {/* ── RETIREMENT HORIZON & FIXED INCOME ── */}
+      <Card style={{ marginBottom: 18 }}>
+        <SubHeading>Retirement Horizon</SubHeading>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
+          <NumInput label="Expected Annual Return" tip={TIPS.ret} value={ret} onChange={setRet} suffix="%" step={0.25} min={0} max={25} />
+          <NumInput label="Current Age"  tip={TIPS.currentAge} value={currentAge} onChange={setCurrentAge} suffix="yrs" step={1} min={40} max={90} />
+          <NumInput label="Plan to Age"  tip={TIPS.planToAge}  value={planToAge}  onChange={setPlanToAge}  suffix="yrs" step={1} min={50} max={110} />
+        </div>
+        {!invalidAges && (
+          <div style={{ marginTop: 10, fontSize: 12.5, color: "#888" }}>
+            Projection spans <strong style={{ color: "#444" }}>{projectionYears} years</strong> — age {currentAge} to {planToAge}
+          </div>
+        )}
+
+        <Divider />
+
+        <SubHeading>Fixed Income</SubHeading>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px", marginBottom: 12 }}>
+          <NumInput label="Monthly Fixed Income" tip={TIPS.fixedIncome} value={fixedIncome} onChange={setFixedIncome} prefix="$" step={100} min={0} />
+        </div>
+        {fixedIncome > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Toggle value={fixedIncomeInflation} onChange={setFixedIncomeInflation} />
+            <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Inflation-adjusted (COLA) <TooltipIcon tip={TIPS.fixedIncomeInflation} /></span>
           </div>
         )}
       </Card>
