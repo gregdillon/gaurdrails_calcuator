@@ -173,6 +173,9 @@ export default function GuardrailsCalc() {
   const [savedFlash,            setSavedFlash]            = useState(false);
   const [finalizeFlash,         setFinalizeFlash]         = useState(false);
   const [guardrailsOpen,        setGuardrailsOpen]        = useState(false);
+  const [simulatorOpen,         setSimulatorOpen]         = useState(false);
+  const [horizonOpen,           setHorizonOpen]           = useState(false);
+  const [projectionOpen,        setProjectionOpen]        = useState(false);
   const [history,               setHistory]               = useState<HistoryRecord[]>(loadHistory);
   const [confirmDeleteIdx,      setConfirmDeleteIdx]      = useState<number | null>(null);
 
@@ -266,27 +269,34 @@ export default function GuardrailsCalc() {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(newHistory));
     setConfirmDeleteIdx(null);
   };
+  // Sim-based (slider) derived values
   const adjPct      = (guardStatus === "extCut" || guardStatus === "extRaise") ? extAdjust : adjust;
-
-  // Guardrail adjusts total spending; net draw recalculated
   const newTotalSpending =
     guardStatus === "cut"   || guardStatus === "extCut"   ? withdrawal * (1 - adjPct / 100) :
     guardStatus === "raise" || guardStatus === "extRaise" ? withdrawal * (1 + adjPct / 100) : withdrawal;
-  const newNetWithdrawal = Math.max(0, newTotalSpending - annualFixed);
-
-  const postAdjRate  = sim > 0 ? (newNetWithdrawal / sim) * 100 : 0;
-  const stillOutside = guardStatus !== "ok" && (postAdjRate > upper || postAdjRate < lower);
-  const midpointRate = (upper + lower) / 2;
-  const midpointNetWithdrawal = (midpointRate / 100) * sim;
-  const midpointTotalSpending = midpointNetWithdrawal + annualFixed;
-  const isMidpointCut = midpointTotalSpending < withdrawal;
-  const applyMidpointReset = () => setWithdrawal(Math.round(midpointTotalSpending));
 
   const invalidGuardrails  = lower >= upper;
   const invalidAges        = planToAge <= currentAge;
   const projectionYears    = invalidAges ? 30 : Math.min(50, planToAge - currentAge);
   const extLower = lower - extWidth;
   const extUpper = upper + extWidth;
+
+  // Actual portfolio derived values (always-visible status section)
+  const midpointRate = (upper + lower) / 2;
+  const actualAdjPct = (actualStatus === "extCut" || actualStatus === "extRaise") ? extAdjust : adjust;
+  const actualNewTotalSpending =
+    actualStatus === "cut"   || actualStatus === "extCut"   ? withdrawal * (1 - actualAdjPct / 100) :
+    actualStatus === "raise" || actualStatus === "extRaise" ? withdrawal * (1 + actualAdjPct / 100) : withdrawal;
+  const actualNewNetWithdrawal = Math.max(0, actualNewTotalSpending - annualFixed);
+  const actualPostAdjRate = portfolio > 0 ? (actualNewNetWithdrawal / portfolio) * 100 : 0;
+  const actualStillOutside = actualStatus !== "ok" && (actualPostAdjRate > upper || actualPostAdjRate < lower);
+  const actualMidpointTotalSpending = (midpointRate / 100) * portfolio + annualFixed;
+  const actualIsMidpointCut = actualMidpointTotalSpending < withdrawal;
+  const applyMidpointReset = () => setWithdrawal(Math.round(actualMidpointTotalSpending));
+  const actualBarMax = Math.min(Math.max(extUpper * 1.4, actualRate + 0.5, 12), 22);
+  const actualRatePos = Math.min(Math.max((actualRate / actualBarMax) * 100, 1), 98);
+  const actualS = STATUS[actualStatus];
+
 
   const projection = useMemo(() => {
     const pts = [];
@@ -438,6 +448,86 @@ export default function GuardrailsCalc() {
         </div>
       </Card>
 
+      {/* ── CURRENT STATUS ── */}
+      <Card style={{ marginBottom: 18 }}>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12.5, color: "#666", marginBottom: 7 }}>
+            Withdrawal Rate: <strong style={{ color: "#1a1a1a" }}>{fmtPct(actualRate)}</strong>
+            <span style={{ color: "#bbb", marginLeft: 8 }}>({fmtMoney(netPortfolioWithdrawal)}/yr net ÷ {fmtMoney(portfolio)})</span>
+          </div>
+          <div style={{ position: "relative", height: 26, borderRadius: 6, overflow: "hidden", display: "flex" }}>
+            <div style={{ flex: Math.max(extLower, 0),               background: "#86efac" }} />
+            <div style={{ flex: Math.max(lower - extLower, 0),       background: "#bbf7d0" }} />
+            <div style={{ flex: Math.max(upper - lower, 0),          background: "#dbeafe" }} />
+            <div style={{ flex: Math.max(extWidth, 0),               background: "#fecaca" }} />
+            <div style={{ flex: Math.max(actualBarMax - extUpper, 0),background: "#fca5a5" }} />
+            <div style={{ position: "absolute", top: 0, bottom: 0, left: `${actualRatePos}%`, width: 3, background: "#1a1a1a", borderRadius: 2, transition: "left 0.08s", boxShadow: "0 0 4px rgba(0,0,0,0.25)" }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#bbb", marginTop: 5, flexWrap: "wrap", gap: 2 }}>
+            <span style={{ color: "#15803d", fontWeight: 500 }}>↑ {fmtPct(extLower)} ext. raise</span>
+            <span style={{ color: "#16a34a", fontWeight: 500 }}>↑ {fmtPct(lower)} raise</span>
+            <span style={{ color: "#dc2626", fontWeight: 500 }}>{fmtPct(upper)} cut ↑</span>
+            <span style={{ color: "#7f1d1d", fontWeight: 500 }}>{fmtPct(extUpper)} ext. cut ↑</span>
+          </div>
+        </div>
+
+        <div style={{ padding: "16px 20px", borderRadius: 10, background: actualS.bg, border: `1px solid ${actualS.border}`, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 26 }}>{actualS.emoji}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 15.5, color: actualS.color, marginBottom: 3 }}>{actualS.label}</div>
+            <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>
+              {actualStatus === "ok"       && `Your rate of ${fmtPct(actualRate)} is within the ${fmtPct(lower)}–${fmtPct(upper)} safe zone. No adjustment needed.`}
+              {actualStatus === "cut"      && `Your rate of ${fmtPct(actualRate)} crossed the upper guardrail (${fmtPct(upper)}). Apply a standard ${adjust}% spending cut.`}
+              {actualStatus === "raise"    && `Your rate of ${fmtPct(actualRate)} dropped below the lower guardrail (${fmtPct(lower)}). Apply a standard ${adjust}% spending increase.`}
+              {actualStatus === "extCut"   && `Your rate of ${fmtPct(actualRate)} is in the extended zone (beyond ${fmtPct(extUpper)}). Apply a larger ${extAdjust}% cut — portfolio stress is significant.`}
+              {actualStatus === "extRaise" && `Your rate of ${fmtPct(actualRate)} is in the extended zone (below ${fmtPct(extLower)}). Portfolio growth supports a larger ${extAdjust}% spending increase.`}
+            </div>
+          </div>
+          {actualStatus !== "ok" && (
+            <div style={{ textAlign: "right", minWidth: 145 }}>
+              <div style={{ fontSize: 11.5, color: "#888", marginBottom: 2 }}>New annual spending</div>
+              <div style={{ fontSize: 22, fontWeight: 750 }}>{fmtMoney(actualNewTotalSpending)}</div>
+              <div style={{ fontSize: 13, color: "#777" }}>{fmtMoney(actualNewTotalSpending / 12)}/mo</div>
+              {annualFixed > 0 && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{fmtMoney(actualNewNetWithdrawal)}/yr from portfolio</div>}
+              <div style={{ fontSize: 11, color: actualS.color, marginTop: 3, fontWeight: 600 }}>
+                {actualIsMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(actualNewTotalSpending - withdrawal))}/yr
+              </div>
+              {(actualStatus === "extCut" || actualStatus === "extRaise") && (
+                <div style={{ fontSize: 10.5, marginTop: 4, color: "#999", background: "#f3f4f6", borderRadius: 5, padding: "2px 7px" }}>Extended zone — {extAdjust}% adj.</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {actualStillOutside && (
+          <div style={{ marginTop: 12, padding: "16px 20px", borderRadius: 10, background: "#fefce8", border: "1px solid #fde047", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 22 }}>⚠️</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "#854d0e", marginBottom: 3, display: "flex", alignItems: "center" }}>
+                Adjustment Insufficient — Midpoint Reset Available <TooltipIcon tip={TIPS.midpoint} />
+              </div>
+              <div style={{ fontSize: 13, color: "#713f12", lineHeight: 1.55 }}>
+                After a {actualAdjPct}% adjustment, your rate would still be <strong>{fmtPct(actualPostAdjRate)}</strong> — outside the safe zone. A midpoint reset targets <strong>{fmtPct(midpointRate)}</strong>, the center of your guardrail band.
+              </div>
+            </div>
+            <div style={{ textAlign: "right", minWidth: 155 }}>
+              <div style={{ fontSize: 11.5, color: "#92400e", marginBottom: 2 }}>Midpoint spending</div>
+              <div style={{ fontSize: 20, fontWeight: 750, color: "#78350f" }}>{fmtMoney(actualMidpointTotalSpending)}</div>
+              <div style={{ fontSize: 13, color: "#92400e" }}>{fmtMoney(actualMidpointTotalSpending / 12)}/mo</div>
+              <div style={{ fontSize: 11, color: "#b45309", marginBottom: 8, fontWeight: 500 }}>
+                {actualIsMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(actualMidpointTotalSpending - withdrawal))}/yr from current
+              </div>
+              <button onClick={applyMidpointReset}
+                style={{ background: "#d97706", color: "#fff", border: "none", borderRadius: 7, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }}
+                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = "#b45309"}
+                onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "#d97706"}>
+                Apply Midpoint Reset
+              </button>
+            </div>
+          </div>
+        )}
+      </Card>
+
       {/* ── ANNUAL HISTORY ── */}
       {history.length > 0 && (
         <Card style={{ marginBottom: 18 }}>
@@ -552,184 +642,161 @@ export default function GuardrailsCalc() {
         )}
       </Card>
 
-      {/* ── SIMULATOR ── */}
+      {/* ── GUARDRAIL SIMULATOR (collapsible) ── */}
       <Card style={{ marginBottom: 18 }}>
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 12.5, color: "#666", marginBottom: 7 }}>
-            Withdrawal Rate: <strong style={{ color: "#1a1a1a" }}>{fmtPct(simRate)}</strong>
-            <span style={{ color: "#bbb", marginLeft: 8 }}>({fmtMoney(netPortfolioWithdrawal)}/yr net ÷ {fmtMoney(sim)})</span>
-          </div>
-          <div style={{ position: "relative", height: 26, borderRadius: 6, overflow: "hidden", display: "flex" }}>
-            <div style={{ flex: Math.max(extLower, 0),          background: "#86efac" }} />
-            <div style={{ flex: Math.max(lower - extLower, 0),  background: "#bbf7d0" }} />
-            <div style={{ flex: Math.max(upper - lower, 0),     background: "#dbeafe" }} />
-            <div style={{ flex: Math.max(extWidth, 0),          background: "#fecaca" }} />
-            <div style={{ flex: Math.max(barMax - extUpper, 0), background: "#fca5a5" }} />
-            <div style={{ position: "absolute", top: 0, bottom: 0, left: `${simPos}%`, width: 3, background: "#1a1a1a", borderRadius: 2, transition: "left 0.08s", boxShadow: "0 0 4px rgba(0,0,0,0.25)" }} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#bbb", marginTop: 5, flexWrap: "wrap", gap: 2 }}>
-            <span style={{ color: "#15803d", fontWeight: 500 }}>↑ {fmtPct(extLower)} ext. raise</span>
-            <span style={{ color: "#16a34a", fontWeight: 500 }}>↑ {fmtPct(lower)} raise</span>
-            <span style={{ color: "#dc2626", fontWeight: 500 }}>{fmtPct(upper)} cut ↑</span>
-            <span style={{ color: "#7f1d1d", fontWeight: 500 }}>{fmtPct(extUpper)} ext. cut ↑</span>
-          </div>
-        </div>
-
-        {/* Status card */}
-        <div style={{ padding: "16px 20px", borderRadius: 10, background: s.bg, border: `1px solid ${s.border}`, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 26 }}>{s.emoji}</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 15.5, color: s.color, marginBottom: 3 }}>{s.label}</div>
-            <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>
-              {guardStatus === "ok"       && `Your rate of ${fmtPct(simRate)} is within the ${fmtPct(lower)}–${fmtPct(upper)} safe zone. No adjustment needed.`}
-              {guardStatus === "cut"      && `Your rate of ${fmtPct(simRate)} crossed the upper guardrail (${fmtPct(upper)}). Apply a standard ${adjust}% spending cut.`}
-              {guardStatus === "raise"    && `Your rate of ${fmtPct(simRate)} dropped below the lower guardrail (${fmtPct(lower)}). Apply a standard ${adjust}% spending increase.`}
-              {guardStatus === "extCut"   && `Your rate of ${fmtPct(simRate)} is in the extended zone (beyond ${fmtPct(extUpper)}). Apply a larger ${extAdjust}% cut — portfolio stress is significant.`}
-              {guardStatus === "extRaise" && `Your rate of ${fmtPct(simRate)} is in the extended zone (below ${fmtPct(extLower)}). Portfolio growth supports a larger ${extAdjust}% spending increase.`}
-            </div>
-          </div>
-          {guardStatus !== "ok" && (
-            <div style={{ textAlign: "right", minWidth: 145 }}>
-              <div style={{ fontSize: 11.5, color: "#888", marginBottom: 2 }}>New annual spending</div>
-              <div style={{ fontSize: 22, fontWeight: 750 }}>{fmtMoney(newTotalSpending)}</div>
-              <div style={{ fontSize: 13, color: "#777" }}>{fmtMoney(newTotalSpending / 12)}/mo</div>
-              {annualFixed > 0 && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{fmtMoney(newNetWithdrawal)}/yr from portfolio</div>}
-              <div style={{ fontSize: 11, color: s.color, marginTop: 3, fontWeight: 600 }}>
-                {isMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(newTotalSpending - withdrawal))}/yr
+        <button onClick={() => setSimulatorOpen(o => !o)}
+          style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+          <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Guardrail Simulator</h2>
+          <span style={{ fontSize: 12, color: "#aaa", transform: simulatorOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>▼</span>
+        </button>
+        {simulatorOpen && (
+          <>
+            <p style={{ fontSize: 13, color: "#888", margin: "8px 0 16px", lineHeight: 1.5 }}>Drag the slider to simulate how a portfolio change would affect your withdrawal rate and guardrail status.</p>
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 7 }}>
+                <span style={{ color: "#aaa" }}>{fmtShort(portfolio * 0.5)}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{fmtMoney(sim)}</span>
+                  {sim !== portfolio && (
+                    <button onClick={() => setSim(portfolio)} title="Reset to starting portfolio value"
+                      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%", border: "1px solid #e2e2e2", background: "#fff", color: "#888", fontSize: 13, cursor: "pointer", lineHeight: 1, transition: "all 0.15s", padding: 0 }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "#eff6ff"; e.currentTarget.style.color = "#2563eb"; e.currentTarget.style.borderColor = "#bfdbfe"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#e2e2e2"; }}>
+                      ↺
+                    </button>
+                  )}
+                </div>
+                <span style={{ color: "#aaa" }}>{fmtShort(portfolio * 1.5)}</span>
               </div>
-              {(guardStatus === "extCut" || guardStatus === "extRaise") && (
-                <div style={{ fontSize: 10.5, marginTop: 4, color: "#999", background: "#f3f4f6", borderRadius: 5, padding: "2px 7px" }}>Extended zone — {extAdjust}% adj.</div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Midpoint reset */}
-        {stillOutside && (
-          <div style={{ marginTop: 12, padding: "16px 20px", borderRadius: 10, background: "#fefce8", border: "1px solid #fde047", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 22 }}>⚠️</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: "#854d0e", marginBottom: 3, display: "flex", alignItems: "center" }}>
-                Adjustment Insufficient — Midpoint Reset Available <TooltipIcon tip={TIPS.midpoint} />
-              </div>
-              <div style={{ fontSize: 13, color: "#713f12", lineHeight: 1.55 }}>
-                After a {adjPct}% adjustment, your rate would still be <strong>{fmtPct(postAdjRate)}</strong> — outside the safe zone. A midpoint reset targets <strong>{fmtPct(midpointRate)}</strong>, the center of your guardrail band.
+              <input type="range" min={portfolio * 0.5} max={portfolio * 1.5} step={portfolio * 0.005}
+                value={sim} onChange={e => setSim(+e.target.value)}
+                style={{ width: "100%", accentColor: "#2563eb", cursor: "pointer", height: 6 }} />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#ccc", marginTop: 3 }}>
+                <span>← Market Decline</span><span>Market Growth →</span>
               </div>
             </div>
-            <div style={{ textAlign: "right", minWidth: 155 }}>
-              <div style={{ fontSize: 11.5, color: "#92400e", marginBottom: 2 }}>Midpoint spending</div>
-              <div style={{ fontSize: 20, fontWeight: 750, color: "#78350f" }}>{fmtMoney(midpointTotalSpending)}</div>
-              <div style={{ fontSize: 13, color: "#92400e" }}>{fmtMoney(midpointTotalSpending / 12)}/mo</div>
-              <div style={{ fontSize: 11, color: "#b45309", marginBottom: 8, fontWeight: 500 }}>
-                {isMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(midpointTotalSpending - withdrawal))}/yr from current
-              </div>
-              <button onClick={applyMidpointReset}
-                style={{ background: "#d97706", color: "#fff", border: "none", borderRadius: 7, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }}
-                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = "#b45309"}
-                onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "#d97706"}>
-                Apply Midpoint Reset
-              </button>
+            <div style={{ marginBottom: 7, fontSize: 12.5, color: "#666" }}>
+              Simulated Rate: <strong style={{ color: "#1a1a1a" }}>{fmtPct(simRate)}</strong>
+              <span style={{ color: "#bbb", marginLeft: 8 }}>({fmtMoney(netPortfolioWithdrawal)}/yr net ÷ {fmtMoney(sim)})</span>
             </div>
-          </div>
+            <div style={{ position: "relative", height: 26, borderRadius: 6, overflow: "hidden", display: "flex" }}>
+              <div style={{ flex: Math.max(extLower, 0),          background: "#86efac" }} />
+              <div style={{ flex: Math.max(lower - extLower, 0),  background: "#bbf7d0" }} />
+              <div style={{ flex: Math.max(upper - lower, 0),     background: "#dbeafe" }} />
+              <div style={{ flex: Math.max(extWidth, 0),          background: "#fecaca" }} />
+              <div style={{ flex: Math.max(barMax - extUpper, 0), background: "#fca5a5" }} />
+              <div style={{ position: "absolute", top: 0, bottom: 0, left: `${simPos}%`, width: 3, background: "#1a1a1a", borderRadius: 2, transition: "left 0.08s", boxShadow: "0 0 4px rgba(0,0,0,0.25)" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#bbb", marginTop: 5, flexWrap: "wrap", gap: 2 }}>
+              <span style={{ color: "#15803d", fontWeight: 500 }}>↑ {fmtPct(extLower)} ext. raise</span>
+              <span style={{ color: "#16a34a", fontWeight: 500 }}>↑ {fmtPct(lower)} raise</span>
+              <span style={{ color: "#dc2626", fontWeight: 500 }}>{fmtPct(upper)} cut ↑</span>
+              <span style={{ color: "#7f1d1d", fontWeight: 500 }}>{fmtPct(extUpper)} ext. cut ↑</span>
+            </div>
+            {guardStatus !== "ok" && (
+              <div style={{ marginTop: 12, padding: "12px 16px", borderRadius: 10, background: s.bg, border: `1px solid ${s.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 22 }}>{s.emoji}</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: s.color }}>{s.label}</div>
+                  <div style={{ fontSize: 12.5, color: "#555" }}>
+                    {guardStatus === "cut"      && `At ${fmtPct(simRate)}, a ${adjust}% cut → ${fmtMoney(newTotalSpending)}/yr`}
+                    {guardStatus === "raise"    && `At ${fmtPct(simRate)}, a ${adjust}% raise → ${fmtMoney(newTotalSpending)}/yr`}
+                    {guardStatus === "extCut"   && `At ${fmtPct(simRate)}, a ${extAdjust}% cut → ${fmtMoney(newTotalSpending)}/yr`}
+                    {guardStatus === "extRaise" && `At ${fmtPct(simRate)}, a ${extAdjust}% raise → ${fmtMoney(newTotalSpending)}/yr`}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
-
-        <Divider />
-
-        <SectionTitle sub="Drag the slider to simulate portfolio value changes. The calculator shows which zone your withdrawal rate falls in and the appropriate spending response.">
-          Guardrail Simulator
-        </SectionTitle>
-
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, marginBottom: 7 }}>
-            <span style={{ color: "#aaa" }}>{fmtShort(portfolio * 0.5)}</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>{fmtMoney(sim)}</span>
-              {sim !== portfolio && (
-                <button onClick={() => setSim(portfolio)} title="Reset to starting portfolio value"
-                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%", border: "1px solid #e2e2e2", background: "#fff", color: "#888", fontSize: 13, cursor: "pointer", lineHeight: 1, transition: "all 0.15s", padding: 0 }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "#eff6ff"; e.currentTarget.style.color = "#2563eb"; e.currentTarget.style.borderColor = "#bfdbfe"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#e2e2e2"; }}>
-                  ↺
-                </button>
-              )}
-            </div>
-            <span style={{ color: "#aaa" }}>{fmtShort(portfolio * 1.5)}</span>
-          </div>
-          <input type="range" min={portfolio * 0.5} max={portfolio * 1.5} step={portfolio * 0.005}
-            value={sim} onChange={e => setSim(+e.target.value)}
-            style={{ width: "100%", accentColor: "#2563eb", cursor: "pointer", height: 6 }} />
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#ccc", marginTop: 3 }}>
-            <span>← Market Decline</span><span>Market Growth →</span>
-          </div>
-        </div>
       </Card>
 
       {/* ── RETIREMENT HORIZON & FIXED INCOME ── */}
       <Card style={{ marginBottom: 18 }}>
-        <SubHeading>Retirement Horizon</SubHeading>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-          <NumInput label="Expected Annual Return" tip={TIPS.ret} value={ret} onChange={setRet} suffix="%" step={0.25} min={0} max={25} />
-          <NumInput label="Current Age"  tip={TIPS.currentAge} value={currentAge} onChange={setCurrentAge} suffix="yrs" step={1} min={40} max={90} />
-          <NumInput label="Plan to Age"  tip={TIPS.planToAge}  value={planToAge}  onChange={setPlanToAge}  suffix="yrs" step={1} min={50} max={110} />
-        </div>
-        {!invalidAges && (
-          <div style={{ marginTop: 10, fontSize: 12.5, color: "#888" }}>
-            Projection spans <strong style={{ color: "#444" }}>{projectionYears} years</strong> — age {currentAge} to {planToAge}
-          </div>
-        )}
+        <button onClick={() => setHorizonOpen(o => !o)}
+          style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+          <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Retirement Horizon</h2>
+          <span style={{ fontSize: 12, color: "#aaa", transform: horizonOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>▼</span>
+        </button>
+        {horizonOpen && (
+          <>
+            <Divider />
+            <SubHeading>Retirement Horizon</SubHeading>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
+              <NumInput label="Expected Annual Return" tip={TIPS.ret} value={ret} onChange={setRet} suffix="%" step={0.25} min={0} max={25} />
+              <NumInput label="Current Age"  tip={TIPS.currentAge} value={currentAge} onChange={setCurrentAge} suffix="yrs" step={1} min={40} max={90} />
+              <NumInput label="Plan to Age"  tip={TIPS.planToAge}  value={planToAge}  onChange={setPlanToAge}  suffix="yrs" step={1} min={50} max={110} />
+            </div>
+            {!invalidAges && (
+              <div style={{ marginTop: 10, fontSize: 12.5, color: "#888" }}>
+                Projection spans <strong style={{ color: "#444" }}>{projectionYears} years</strong> — age {currentAge} to {planToAge}
+              </div>
+            )}
 
-        <Divider />
+            <Divider />
 
-        <SubHeading>Fixed Income</SubHeading>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px", marginBottom: 12 }}>
-          <NumInput label="Monthly Fixed Income" tip={TIPS.fixedIncome} value={fixedIncome} onChange={setFixedIncome} prefix="$" step={100} min={0} />
-        </div>
-        {fixedIncome > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <Toggle value={fixedIncomeInflation} onChange={setFixedIncomeInflation} />
-            <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Inflation-adjusted (COLA) <TooltipIcon tip={TIPS.fixedIncomeInflation} /></span>
-          </div>
+            <SubHeading>Fixed Income</SubHeading>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px", marginBottom: 12 }}>
+              <NumInput label="Monthly Fixed Income" tip={TIPS.fixedIncome} value={fixedIncome} onChange={setFixedIncome} prefix="$" step={100} min={0} />
+            </div>
+            {fixedIncome > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <Toggle value={fixedIncomeInflation} onChange={setFixedIncomeInflation} />
+                <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Inflation-adjusted (COLA) <TooltipIcon tip={TIPS.fixedIncomeInflation} /></span>
+              </div>
+            )}
+          </>
         )}
       </Card>
 
       {/* ── PROJECTION ── */}
       <Card>
-        <SectionTitle sub={`Age ${currentAge}–${planToAge} · ${ret}% return · ${inf}% inflation · tiered guardrails applied annually${prosperity ? " · Prosperity Rule on" : ""}${annualFixed > 0 ? ` · ${fmtMoney(fixedIncome)}/mo fixed income` : ""}`}>
-          {projectionYears}-Year Projection
-        </SectionTitle>
-        {depleted && (
-          <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, marginBottom: 18, fontSize: 13, color: "#b91c1c" }}>
-            ⚠️ Portfolio depletes before age {planToAge}. Consider reducing your withdrawal rate, increasing expected returns, or tightening your guardrails.
-          </div>
+        <button onClick={() => setProjectionOpen(o => !o)}
+          style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+          <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>{projectionYears}-Year Projection</h2>
+          <span style={{ fontSize: 12, color: "#aaa", transform: projectionOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>▼</span>
+        </button>
+        {projectionOpen && (
+          <>
+            <Divider />
+            <p style={{ fontSize: 12.5, color: "#888", margin: "0 0 16px", lineHeight: 1.5 }}>
+              Age {currentAge}–{planToAge} · {ret}% return · {inf}% inflation · tiered guardrails applied annually{prosperity ? " · Prosperity Rule on" : ""}{annualFixed > 0 ? ` · ${fmtMoney(fixedIncome)}/mo fixed income` : ""}
+            </p>
+            {depleted && (
+              <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, marginBottom: 18, fontSize: 13, color: "#b91c1c" }}>
+                ⚠️ Portfolio depletes before age {planToAge}. Consider reducing your withdrawal rate, increasing expected returns, or tightening your guardrails.
+              </div>
+            )}
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#444", marginBottom: 10 }}>Portfolio Balance</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={projection} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="age" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} label={{ value: "Age", position: "insideBottomRight", offset: -4, fontSize: 11, fill: "#ccc" }} />
+                  <YAxis tickFormatter={fmtShort} tick={{ fontSize: 11 }} width={58} tickLine={false} axisLine={false} />
+                  <Tooltip formatter={(v) => fmtMoney(Number(v))} labelFormatter={(a) => `Age ${a}`} contentStyle={{ fontSize: 12.5, borderRadius: 7 }} />
+                  <Line type="monotone" dataKey="portfolio" stroke="#2563eb" strokeWidth={2.5} dot={false} name="Portfolio Balance" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#444", marginBottom: 10 }}>
+                Annual Spending
+                {annualFixed > 0 && <span style={{ fontSize: 11.5, fontWeight: 400, color: "#aaa", marginLeft: 8 }}>— dashed line shows net portfolio draw</span>}
+              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={projection} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="age" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} label={{ value: "Age", position: "insideBottomRight", offset: -4, fontSize: 11, fill: "#ccc" }} />
+                  <YAxis tickFormatter={fmtShort} tick={{ fontSize: 11 }} width={58} tickLine={false} axisLine={false} />
+                  <Tooltip formatter={(v) => fmtMoney(Number(v))} labelFormatter={(a) => `Age ${a}`} contentStyle={{ fontSize: 12.5, borderRadius: 7 }} />
+                  <Line type="monotone" dataKey="withdrawal" stroke="#16a34a" strokeWidth={2.5} dot={false} name="Annual Spending" />
+                  {annualFixed > 0 && <Line type="monotone" dataKey="netDraw" stroke="#16a34a" strokeWidth={1.5} strokeDasharray="5 4" dot={false} name="Net Portfolio Draw" />}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </>
         )}
-        <div style={{ marginBottom: 32 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#444", marginBottom: 10 }}>Portfolio Balance</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={projection} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="age" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} label={{ value: "Age", position: "insideBottomRight", offset: -4, fontSize: 11, fill: "#ccc" }} />
-              <YAxis tickFormatter={fmtShort} tick={{ fontSize: 11 }} width={58} tickLine={false} axisLine={false} />
-              <Tooltip formatter={(v) => fmtMoney(Number(v))} labelFormatter={(a) => `Age ${a}`} contentStyle={{ fontSize: 12.5, borderRadius: 7 }} />
-              <Line type="monotone" dataKey="portfolio" stroke="#2563eb" strokeWidth={2.5} dot={false} name="Portfolio Balance" />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#444", marginBottom: 10 }}>
-            Annual Spending
-            {annualFixed > 0 && <span style={{ fontSize: 11.5, fontWeight: 400, color: "#aaa", marginLeft: 8 }}>— dashed line shows net portfolio draw</span>}
-          </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={projection} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="age" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} label={{ value: "Age", position: "insideBottomRight", offset: -4, fontSize: 11, fill: "#ccc" }} />
-              <YAxis tickFormatter={fmtShort} tick={{ fontSize: 11 }} width={58} tickLine={false} axisLine={false} />
-              <Tooltip formatter={(v) => fmtMoney(Number(v))} labelFormatter={(a) => `Age ${a}`} contentStyle={{ fontSize: 12.5, borderRadius: 7 }} />
-              <Line type="monotone" dataKey="withdrawal" stroke="#16a34a" strokeWidth={2.5} dot={false} name="Annual Spending" />
-              {annualFixed > 0 && <Line type="monotone" dataKey="netDraw" stroke="#16a34a" strokeWidth={1.5} strokeDasharray="5 4" dot={false} name="Net Portfolio Draw" />}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
       </Card>
 
       <p style={{ fontSize: 12, color: "#ccc", textAlign: "center", marginTop: 20 }}>For educational purposes only · Not financial advice</p>
