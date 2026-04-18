@@ -369,7 +369,6 @@ export default function GuardrailsCalc() {
       {/* ── SETTINGS ── */}
       <Card style={{ marginBottom: 18 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Settings</h2>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {savedFlash && <span style={{ fontSize: 12, color: "#16a34a", fontWeight: 600 }}>✓ Saved</span>}
             {finalizeFlash && <span style={{ fontSize: 12, color: "#0369a1", fontWeight: 600 }}>✓ Finalized &amp; recorded</span>}
@@ -389,7 +388,7 @@ export default function GuardrailsCalc() {
               style={{ padding: "5px 13px", fontSize: 12.5, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer" }}
               onMouseEnter={e => { e.currentTarget.style.background = "#f1f5f9"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "#f8fafc"; }}>
-              Import / Export
+              Data
             </button>
             <button onClick={handleFinalize} disabled={actualStatus !== "ok"}
               title={actualStatus !== "ok" ? "Spending must be within guardrails before finalizing" : "Record this year's plan and advance previous portfolio value"}
