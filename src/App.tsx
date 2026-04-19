@@ -439,11 +439,6 @@ export default function GuardrailsCalc() {
                 onMouseLeave={e => { if (!portfolioDeclined) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#e2e2e2"; } }}>
                 ＋{inf}%
               </button>
-              {portfolioDeclined && (
-                <span style={{ fontSize: 11, color: "#b91c1c", display: "flex", alignItems: "center", gap: 3 }}>
-                  ⚠ Portfolio declined — no inflation adj. (Prosperity Rule)
-                </span>
-              )}
               {prevWithdrawal !== null && (
                 <button onClick={handleUndo} title="Undo last inflation adjustment"
                   style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#fef9ec", border: "1px solid #fde68a", borderRadius: 6, padding: "3px 9px", fontSize: 11.5, color: "#92400e", cursor: "pointer", fontWeight: 500, transition: "all 0.15s" }}
@@ -453,6 +448,11 @@ export default function GuardrailsCalc() {
                 </button>
               )}
             </div>
+            {portfolioDeclined && (
+              <div style={{ marginTop: 5, fontSize: 12, color: "#b91c1c", display: "flex", alignItems: "center", gap: 4 }}>
+                ⚠ Portfolio declined — no inflation adj
+              </div>
+            )}
           </div>
 
           <NumInput label="Inflation Rate" tip={TIPS.inf} value={inf} onChange={setInf} suffix="%" step={0.1} min={0} max={15} />
