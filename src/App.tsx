@@ -19,6 +19,7 @@ const DEFAULTS = {
 
 const STORAGE_KEY = "guardrails_calc_settings";
 const HISTORY_KEY = "guardrails_calc_history";
+const LOCK_KEY    = "guardrails_calc_lock";
 type Settings = typeof DEFAULTS;
 
 type HistoryRecord = {
@@ -46,6 +47,10 @@ function loadHistory(): HistoryRecord[] {
   } catch {
     return [];
   }
+}
+
+function loadLocked(): boolean {
+  return localStorage.getItem(LOCK_KEY) === "true";
 }
 
 const TIPS = {
@@ -175,6 +180,7 @@ export default function GuardrailsCalc() {
   const [projectionOpen,        setProjectionOpen]        = useState(false);
   const [history,               setHistory]               = useState<HistoryRecord[]>(loadHistory);
   const [confirmDeleteIdx,      setConfirmDeleteIdx]      = useState<number | null>(null);
+  const [guardrailsLocked,      setGuardrailsLocked]      = useState<boolean>(loadLocked);
 
   const setPortfolio = (v: number) => { setPortfolioRaw(v); setSim(v); };
   const setWithdrawal = (v: number) => { setWithdrawalRaw(v); setPrevWithdrawal(null); };
@@ -291,6 +297,8 @@ export default function GuardrailsCalc() {
       fixedIncome, fixedIncomeInflation, prevPortfolio: portfolio,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(LOCK_KEY, "true");
+    setGuardrailsLocked(true);
     setFinalizeFlash(true);
     setTimeout(() => setFinalizeFlash(false), 2500);
   };
@@ -615,17 +623,35 @@ export default function GuardrailsCalc() {
       <Card style={{ marginBottom: 18 }}>
         <button onClick={() => setGuardrailsOpen(o => !o)}
           style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
-          <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Guardrail Zones &amp; Extended Zones</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Guardrail Zones &amp; Extended Zones</h2>
+            {guardrailsLocked && (
+              <span style={{ fontSize: 11, fontWeight: 600, color: "#92400e", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 20, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                🔒 Locked
+              </span>
+            )}
+          </div>
           <span style={{ fontSize: 12, color: "#aaa", transform: guardrailsOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>▼</span>
         </button>
         {guardrailsOpen && (
           <>
             <Divider />
-            <SubHeading>Guardrail Zones</SubHeading>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <SubHeading>Guardrail Zones</SubHeading>
+              {guardrailsLocked && (
+                <button
+                  onClick={() => { setGuardrailsLocked(false); localStorage.setItem(LOCK_KEY, "false"); }}
+                  style={{ padding: "4px 12px", fontSize: 12, fontWeight: 500, borderRadius: 6, border: "1px solid #fde68a", background: "#fef9ec", color: "#92400e", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "#fef3c7"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "#fef9ec"; }}>
+                  🔓 Unlock
+                </button>
+              )}
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-              <NumInput label="Upper Guardrail"     tip={TIPS.upper}  value={upper}  onChange={setUpper}  suffix="%" step={0.1} min={0} max={25} />
-              <NumInput label="Lower Guardrail"     tip={TIPS.lower}  value={lower}  onChange={setLower}  suffix="%" step={0.1} min={0} max={25} />
-              <NumInput label="Standard Adjustment" tip={TIPS.adjust} value={adjust} onChange={setAdjust} suffix="%" step={1}   min={1} max={50} />
+              <NumInput label="Upper Guardrail"     tip={TIPS.upper}  value={upper}  onChange={setUpper}  suffix="%" step={0.1} min={0} max={25} disabled={guardrailsLocked} />
+              <NumInput label="Lower Guardrail"     tip={TIPS.lower}  value={lower}  onChange={setLower}  suffix="%" step={0.1} min={0} max={25} disabled={guardrailsLocked} />
+              <NumInput label="Standard Adjustment" tip={TIPS.adjust} value={adjust} onChange={setAdjust} suffix="%" step={1}   min={1} max={50} disabled={guardrailsLocked} />
             </div>
             <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <button
