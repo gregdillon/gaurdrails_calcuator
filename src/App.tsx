@@ -121,9 +121,9 @@ function Card({ children, style }: { children: ReactNode; style?: CSSProperties 
 function SubHeading({ children }: { children: ReactNode }) {
   return <div style={{ fontSize: 11, fontWeight: 600, color: "#aaa", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>{children}</div>;
 }
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ value, onChange, disabled }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <button onClick={() => onChange(!value)} style={{ position: "relative", width: 38, height: 22, borderRadius: 11, border: "none", background: value ? "#2563eb" : "#d1d5db", cursor: "pointer", transition: "background 0.2s", flexShrink: 0, padding: 0 }}>
+    <button onClick={() => { if (!disabled) onChange(!value); }} style={{ position: "relative", width: 38, height: 22, borderRadius: 11, border: "none", background: disabled ? "#e5e7eb" : value ? "#2563eb" : "#d1d5db", cursor: disabled ? "not-allowed" : "pointer", transition: "background 0.2s", flexShrink: 0, padding: 0, opacity: disabled ? 0.6 : 1 }}>
       <span style={{ position: "absolute", top: 3, left: value ? 19 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", display: "block", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
     </button>
   );
@@ -655,14 +655,14 @@ export default function GuardrailsCalc() {
             </div>
             <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <button
-                onClick={() => { if (!symmetric) { setUpperRaw(parseFloat((initialRate * 1.2).toFixed(2))); setLowerRaw(parseFloat((initialRate * 0.8).toFixed(2))); } }}
-                disabled={symmetric}
-                style={{ padding: "4px 12px", fontSize: 12, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e2e2", background: symmetric ? "#f9f9f9" : "#fff", color: symmetric ? "#bbb" : "#555", cursor: symmetric ? "not-allowed" : "pointer" }}
-                onMouseEnter={e => { if (!symmetric) { e.currentTarget.style.background = "#eff6ff"; e.currentTarget.style.borderColor = "#bfdbfe"; e.currentTarget.style.color = "#2563eb"; } }}
-                onMouseLeave={e => { if (!symmetric) { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#e2e2e2"; e.currentTarget.style.color = "#555"; } }}>
+                onClick={() => { if (!symmetric && !guardrailsLocked) { setUpperRaw(parseFloat((initialRate * 1.2).toFixed(2))); setLowerRaw(parseFloat((initialRate * 0.8).toFixed(2))); } }}
+                disabled={symmetric || guardrailsLocked}
+                style={{ padding: "4px 12px", fontSize: 12, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e2e2", background: (symmetric || guardrailsLocked) ? "#f9f9f9" : "#fff", color: (symmetric || guardrailsLocked) ? "#bbb" : "#555", cursor: (symmetric || guardrailsLocked) ? "not-allowed" : "pointer" }}
+                onMouseEnter={e => { if (!symmetric && !guardrailsLocked) { e.currentTarget.style.background = "#eff6ff"; e.currentTarget.style.borderColor = "#bfdbfe"; e.currentTarget.style.color = "#2563eb"; } }}
+                onMouseLeave={e => { if (!symmetric && !guardrailsLocked) { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#e2e2e2"; e.currentTarget.style.color = "#555"; } }}>
                 Reset to ±20% of initial rate
               </button>
-              {symmetric && (
+              {symmetric && !guardrailsLocked && (
                 <span style={{ fontSize: 12, color: "#b91c1c", display: "flex", alignItems: "center", gap: 4 }}>
                   ⚠ Turn off Symmetrical Guardrails first
                 </span>
@@ -670,12 +670,12 @@ export default function GuardrailsCalc() {
             </div>
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <Toggle value={symmetric} onChange={handleSymmetricToggle} />
+                <Toggle value={symmetric} onChange={handleSymmetricToggle} disabled={guardrailsLocked} />
                 <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Symmetrical Guardrails <TooltipIcon tip={TIPS.symmetric} /></span>
                 {symmetric && <span style={{ fontSize: 12, color: "#2563eb", background: "#eff6ff", padding: "2px 9px", borderRadius: 20, border: "1px solid #bfdbfe" }}>±{(upper - initialRate).toFixed(2)}% from {fmtPct(initialRate)}</span>}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <Toggle value={prosperity} onChange={setProsperity} />
+                <Toggle value={prosperity} onChange={setProsperity} disabled={guardrailsLocked} />
                 <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Prosperity Rule (Guyton-Klinger) <TooltipIcon tip={TIPS.prosperity} /></span>
                 {prosperity && <span style={{ fontSize: 12, color: "#6b7280", background: "#f3f4f6", padding: "2px 9px", borderRadius: 20, border: "1px solid #e5e7eb" }}>Skip inflation adj. in down-return years</span>}
               </div>
@@ -685,8 +685,8 @@ export default function GuardrailsCalc() {
 
             <SubHeading>Extended Zones <span style={{ fontWeight: 400, color: "#bbb", textTransform: "none", letterSpacing: 0 }}>— larger adjustments for severe portfolio moves</span></SubHeading>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-              <NumInput label="Extended Zone Width"      tip={TIPS.extWidth}  value={extWidth}  onChange={setExtWidth}  suffix="%" step={0.1} min={0.1} max={10} />
-              <NumInput label="Extended Zone Adjustment" tip={TIPS.extAdjust} value={extAdjust} onChange={setExtAdjust} suffix="%" step={1}   min={1}   max={75} />
+              <NumInput label="Extended Zone Width"      tip={TIPS.extWidth}  value={extWidth}  onChange={setExtWidth}  suffix="%" step={0.1} min={0.1} max={10} disabled={guardrailsLocked} />
+              <NumInput label="Extended Zone Adjustment" tip={TIPS.extAdjust} value={extAdjust} onChange={setExtAdjust} suffix="%" step={1}   min={1}   max={75} disabled={guardrailsLocked} />
             </div>
             <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, alignItems: "center" }}>
               {[
