@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import type { ReactNode, CSSProperties } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -11,7 +11,7 @@ const DEFAULTS = {
   upper: 6, lower: 4, adjust: 10,
   extWidth: 1, extAdjust: 5,
   ret: 6, inf: 3,
-  symmetric: true, prosperity: true,
+  symmetric: false, prosperity: true,
   currentAge: 65, planToAge: 90,
   fixedIncome: 0, fixedIncomeInflation: false,
   prevPortfolio: 0,
@@ -210,6 +210,14 @@ export default function GuardrailsCalc() {
   const setUpper = (v: number) => { setUpperRaw(v); if (symmetric) setLowerRaw(parseFloat((initialRate - (v - initialRate)).toFixed(2))); };
   const setLower = (v: number) => { setLowerRaw(v); if (symmetric) setUpperRaw(parseFloat((initialRate + (initialRate - v)).toFixed(2))); };
   const handleSymmetricToggle = (val: boolean) => { setSymmetric(val); if (val) setLowerRaw(parseFloat((initialRate - (upper - initialRate)).toFixed(2))); };
+
+  // Until the Guardrail Zones section is locked, keep the guardrails pinned at ±20% of the initial withdrawal rate.
+  useEffect(() => {
+    if (!guardrailsLocked) {
+      setUpperRaw(parseFloat((initialRate * 1.2).toFixed(2)));
+      setLowerRaw(parseFloat((initialRate * 0.8).toFixed(2)));
+    }
+  }, [initialRate, guardrailsLocked]);
 
   const handleSave = () => {
     const settings: Settings = {
