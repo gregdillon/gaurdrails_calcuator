@@ -1,6 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
 import type { ReactNode, CSSProperties } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 const fmtMoney  = (n: number) => n <= 0 ? "$0" : "$" + Math.round(n).toLocaleString();
 const fmtShort  = (n: number) => n >= 1e6 ? "$" + (n/1e6).toFixed(1)+"M" : n >= 1e3 ? "$" + (n/1e3).toFixed(0)+"K" : "$"+Math.round(n);
@@ -176,8 +175,6 @@ export default function GuardrailsCalc() {
   const [copyFlash,             setCopyFlash]             = useState(false);
   const [guardrailsOpen,        setGuardrailsOpen]        = useState(false);
   const [simulatorOpen,         setSimulatorOpen]         = useState(false);
-  const [horizonOpen,           setHorizonOpen]           = useState(false);
-  const [projectionOpen,        setProjectionOpen]        = useState(false);
   const [history,               setHistory]               = useState<HistoryRecord[]>(loadHistory);
   const [confirmDeleteIdx,      setConfirmDeleteIdx]      = useState<number | null>(null);
   const [guardrailsLocked,      setGuardrailsLocked]      = useState<boolean>(loadLocked);
@@ -325,7 +322,6 @@ export default function GuardrailsCalc() {
 
   const invalidGuardrails  = lower >= upper;
   const invalidAges        = planToAge <= currentAge;
-  const projectionYears    = invalidAges ? 30 : Math.min(50, planToAge - currentAge);
   const extLower = lower - extWidth;
   const extUpper = upper + extWidth;
 
@@ -346,34 +342,12 @@ export default function GuardrailsCalc() {
   const actualS = STATUS[actualStatus];
 
 
-  const projection = useMemo(() => {
-    const pts = [];
-    let pv = portfolio, wd = withdrawal, fi = annualFixed;
-    for (let y = 0; y <= projectionYears; y++) {
-      const netDraw = Math.max(0, wd - fi);
-      pts.push({ age: currentAge + y, year: y, portfolio: pv > 0 ? Math.round(pv) : 0, withdrawal: pv > 0 ? Math.round(wd) : 0, netDraw: pv > 0 ? Math.round(netDraw) : 0 });
-      if (pv <= 0) break;
-      const rate = (netDraw / pv) * 100;
-      const st   = getStatus(rate, lower, upper, extWidth);
-      const a    = (st === "extCut" || st === "extRaise") ? extAdjust : adjust;
-      const applyInflation = !prosperity || ret > 0;
-      let nextWd = st === "cut" || st === "extCut"     ? wd * (1 - a / 100)
-                 : st === "raise" || st === "extRaise" ? wd * (1 + a / 100)
-                 : applyInflation ? wd * (1 + inf / 100) : wd;
-      fi = fixedIncomeInflation ? fi * (1 + inf / 100) : fi;
-      pv = pv * (1 + ret / 100) - Math.max(0, nextWd - fi);
-      wd = nextWd;
-    }
-    return pts;
-  }, [portfolio, withdrawal, upper, lower, adjust, extWidth, extAdjust, ret, inf, prosperity, projectionYears, currentAge, annualFixed, fixedIncomeInflation]);
-
-  const depleted = projection[projection.length - 1].portfolio <= 0;
   const barMax   = Math.min(Math.max(extUpper * 1.4, simRate + 0.5, 12), 22);
   const simPos   = Math.min(Math.max((simRate / barMax) * 100, 1), 98);
   const s        = STATUS[guardStatus];
 
   return (
-    <div style={{ fontFamily: "system-ui,-apple-system,sans-serif", maxWidth: 840, margin: "0 auto", padding: "28px 18px", background: "#f7f7f7", minHeight: "100vh", color: "#1a1a1a" }}>
+    <div style={{ fontFamily: "system-ui,-apple-system,sans-serif", width: "100%", maxWidth: 840, minWidth: 0, margin: "0 auto", padding: "28px 18px", background: "#f7f7f7", minHeight: "100vh", color: "#1a1a1a", boxSizing: "border-box" }}>
 
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 23, fontWeight: 750, margin: "0 0 6px" }}>Guardrails Retirement Calculator</h1>
@@ -431,7 +405,7 @@ export default function GuardrailsCalc() {
         <SubHeading>Portfolio &amp; Withdrawals</SubHeading>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
           <NumInput label="Current Portfolio Value"       tip={TIPS.portfolio}     value={portfolio}     onChange={setPortfolio}     prefix="$" step={10000} min={0} />
-          <NumInput label="Previous Year Portfolio Value" tip={TIPS.prevPortfolio} value={prevPortfolio} onChange={setPrevPortfolio} prefix="$" step={10000} min={0} />
+          <NumInput label="Previous Year Portfolio Value" tip={TIPS.prevPortfolio} value={prevPortfolio} onChange={setPrevPortfolio} prefix="$" step={10000} min={0} disabled />
 
           {/* Withdrawal with inflation adj + undo */}
           <div>
@@ -585,8 +559,8 @@ export default function GuardrailsCalc() {
       {history.length > 0 && (
         <Card style={{ marginBottom: 18 }}>
           <h2 style={{ fontSize: 15, fontWeight: 650, margin: "0 0 16px", color: "#222" }}>Annual History</h2>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <div style={{ overflowX: "auto", maxWidth: "100%", WebkitOverflowScrolling: "touch" }}>
+            <table style={{ minWidth: 480, width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid #e8e8e8" }}>
                   {["Date", "Portfolio", "Prev Portfolio", "Annual Spending", "Rate", ""].map(h => (
@@ -782,93 +756,6 @@ export default function GuardrailsCalc() {
         )}
       </Card>
 
-      {/* ── RETIREMENT HORIZON & FIXED INCOME ── */}
-      <Card style={{ marginBottom: 18 }}>
-        <button onClick={() => setHorizonOpen(o => !o)}
-          style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
-          <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Retirement Horizon</h2>
-          <span style={{ fontSize: 12, color: "#aaa", transform: horizonOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>▼</span>
-        </button>
-        {horizonOpen && (
-          <>
-            <Divider />
-            <SubHeading>Retirement Horizon</SubHeading>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-              <NumInput label="Expected Annual Return" tip={TIPS.ret} value={ret} onChange={setRet} suffix="%" step={0.25} min={0} max={25} />
-              <NumInput label="Current Age"  tip={TIPS.currentAge} value={currentAge} onChange={setCurrentAge} suffix="yrs" step={1} min={40} max={90} />
-              <NumInput label="Plan to Age"  tip={TIPS.planToAge}  value={planToAge}  onChange={setPlanToAge}  suffix="yrs" step={1} min={50} max={110} />
-            </div>
-            {!invalidAges && (
-              <div style={{ marginTop: 10, fontSize: 12.5, color: "#888" }}>
-                Projection spans <strong style={{ color: "#444" }}>{projectionYears} years</strong> — age {currentAge} to {planToAge}
-              </div>
-            )}
-
-            <Divider />
-
-            <SubHeading>Fixed Income</SubHeading>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px", marginBottom: 12 }}>
-              <NumInput label="Monthly Fixed Income" tip={TIPS.fixedIncome} value={fixedIncome} onChange={setFixedIncome} prefix="$" step={100} min={0} />
-            </div>
-            {fixedIncome > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <Toggle value={fixedIncomeInflation} onChange={setFixedIncomeInflation} />
-                <span style={{ fontSize: 13, fontWeight: 500, color: "#444" }}>Inflation-adjusted (COLA) <TooltipIcon tip={TIPS.fixedIncomeInflation} /></span>
-              </div>
-            )}
-          </>
-        )}
-      </Card>
-
-      {/* ── PROJECTION ── */}
-      <Card>
-        <button onClick={() => setProjectionOpen(o => !o)}
-          style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
-          <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>{projectionYears}-Year Projection</h2>
-          <span style={{ fontSize: 12, color: "#aaa", transform: projectionOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>▼</span>
-        </button>
-        {projectionOpen && (
-          <>
-            <Divider />
-            <p style={{ fontSize: 12.5, color: "#888", margin: "0 0 16px", lineHeight: 1.5 }}>
-              Age {currentAge}–{planToAge} · {ret}% return · {inf}% inflation · tiered guardrails applied annually{prosperity ? " · Prosperity Rule on" : ""}{annualFixed > 0 ? ` · ${fmtMoney(fixedIncome)}/mo fixed income` : ""}
-            </p>
-            {depleted && (
-              <div style={{ padding: "10px 14px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, marginBottom: 18, fontSize: 13, color: "#b91c1c" }}>
-                ⚠️ Portfolio depletes before age {planToAge}. Consider reducing your withdrawal rate, increasing expected returns, or tightening your guardrails.
-              </div>
-            )}
-            <div style={{ marginBottom: 32 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#444", marginBottom: 10 }}>Portfolio Balance</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={projection} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="age" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} label={{ value: "Age", position: "insideBottomRight", offset: -4, fontSize: 11, fill: "#ccc" }} />
-                  <YAxis tickFormatter={fmtShort} tick={{ fontSize: 11 }} width={58} tickLine={false} axisLine={false} />
-                  <Tooltip formatter={(v) => fmtMoney(Number(v))} labelFormatter={(a) => `Age ${a}`} contentStyle={{ fontSize: 12.5, borderRadius: 7 }} />
-                  <Line type="monotone" dataKey="portfolio" stroke="#2563eb" strokeWidth={2.5} dot={false} name="Portfolio Balance" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#444", marginBottom: 10 }}>
-                Annual Spending
-                {annualFixed > 0 && <span style={{ fontSize: 11.5, fontWeight: 400, color: "#aaa", marginLeft: 8 }}>— dashed line shows net portfolio draw</span>}
-              </div>
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={projection} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="age" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} label={{ value: "Age", position: "insideBottomRight", offset: -4, fontSize: 11, fill: "#ccc" }} />
-                  <YAxis tickFormatter={fmtShort} tick={{ fontSize: 11 }} width={58} tickLine={false} axisLine={false} />
-                  <Tooltip formatter={(v) => fmtMoney(Number(v))} labelFormatter={(a) => `Age ${a}`} contentStyle={{ fontSize: 12.5, borderRadius: 7 }} />
-                  <Line type="monotone" dataKey="withdrawal" stroke="#16a34a" strokeWidth={2.5} dot={false} name="Annual Spending" />
-                  {annualFixed > 0 && <Line type="monotone" dataKey="netDraw" stroke="#16a34a" strokeWidth={1.5} strokeDasharray="5 4" dot={false} name="Net Portfolio Draw" />}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </>
-        )}
-      </Card>
 
       <p style={{ fontSize: 12, color: "#ccc", textAlign: "center", marginTop: 20 }}>For educational purposes only · Not financial advice</p>
 
