@@ -440,102 +440,100 @@ export default function GuardrailsCalc() {
           <NumInput label="Inflation Rate" tip={TIPS.inf} value={inf} onChange={setInf} suffix="%" step={0.1} min={0} max={15} />
         </div>
 
-        {/* Summary strip */}
-        <div style={{ marginTop: 16, padding: "13px 16px", background: "#f7f8fa", borderRadius: 8, display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
-          <div>
-            <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Initial Withdrawal Rate</div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{fmtPct(initialRate)}</div>
-            <div style={{ fontSize: 11, color: "#bbb", marginTop: 1 }}>net portfolio draw rate</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Annual Spending</div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(withdrawal)}</div>
-            <div style={{ fontSize: 11, color: "#bbb", marginTop: 1 }}>{fmtMoney(withdrawal / 12)}/mo</div>
-          </div>
-          {annualFixed > 0 && <>
-            <div>
-              <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Fixed Income</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: "#16a34a" }}>−{fmtMoney(annualFixed)}</div>
-              <div style={{ fontSize: 11, color: "#bbb", marginTop: 1 }}>{fmtMoney(fixedIncome)}/mo</div>
+        {/* Summary strip — status graph (left) + key metrics (right), status box below */}
+        <div style={{ marginTop: 16, padding: 16, background: "#f7f8fa", borderRadius: 8, display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+            {/* Status graph */}
+            <div style={{ flex: "1 1 300px", minWidth: 240 }}>
+              <div style={{ fontSize: 12.5, color: "#666", marginBottom: 7 }}>
+                Withdrawal Rate: <strong style={{ color: "#1a1a1a" }}>{fmtPct(actualRate)}</strong>
+                <span style={{ color: "#bbb", marginLeft: 8 }}>({fmtMoney(netPortfolioWithdrawal)}/yr net ÷ {fmtMoney(portfolio)})</span>
+              </div>
+              <div style={{ position: "relative", height: 26, borderRadius: 6, overflow: "hidden", display: "flex" }}>
+                <div style={{ flex: Math.max(lower, 0),                  background: "#bbf7d0" }} />
+                <div style={{ flex: Math.max(upper - lower, 0),          background: "#dbeafe" }} />
+                <div style={{ flex: Math.max(actualBarMax - upper, 0),   background: "#fecaca" }} />
+                <div style={{ position: "absolute", top: 0, bottom: 0, left: `${actualRatePos}%`, width: 3, background: "#1a1a1a", borderRadius: 2, transition: "left 0.08s", boxShadow: "0 0 4px rgba(0,0,0,0.25)" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#bbb", marginTop: 5, flexWrap: "wrap", gap: 2 }}>
+                <span style={{ color: "#16a34a", fontWeight: 500 }}>↑ {fmtPct(lower)} raise</span>
+                <span style={{ color: "#dc2626", fontWeight: 500 }}>{fmtPct(upper)} cut ↑</span>
+              </div>
             </div>
-            <div>
-              <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Net Portfolio Draw</div>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(netPortfolioWithdrawal)}</div>
-              <div style={{ fontSize: 11, color: "#bbb", marginTop: 1 }}>{fmtMoney(netPortfolioWithdrawal / 12)}/mo</div>
+            {/* Key metrics */}
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Annual Spending</div>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(withdrawal)}</div>
+                <div style={{ fontSize: 11, color: "#bbb", marginTop: 1 }}>{fmtMoney(withdrawal / 12)}/mo</div>
+              </div>
+              {annualFixed > 0 && <>
+                <div>
+                  <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Fixed Income</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "#16a34a" }}>−{fmtMoney(annualFixed)}</div>
+                  <div style={{ fontSize: 11, color: "#bbb", marginTop: 1 }}>{fmtMoney(fixedIncome)}/mo</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Net Portfolio Draw</div>
+                  <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(netPortfolioWithdrawal)}</div>
+                  <div style={{ fontSize: 11, color: "#bbb", marginTop: 1 }}>{fmtMoney(netPortfolioWithdrawal / 12)}/mo</div>
+                </div>
+              </>}
             </div>
-          </>}
-        </div>
-      </Card>
+          </div>
 
-      {/* ── CURRENT STATUS ── */}
-      <Card style={{ marginBottom: 18 }}>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12.5, color: "#666", marginBottom: 7 }}>
-            Withdrawal Rate: <strong style={{ color: "#1a1a1a" }}>{fmtPct(actualRate)}</strong>
-            <span style={{ color: "#bbb", marginLeft: 8 }}>({fmtMoney(netPortfolioWithdrawal)}/yr net ÷ {fmtMoney(portfolio)})</span>
-          </div>
-          <div style={{ position: "relative", height: 26, borderRadius: 6, overflow: "hidden", display: "flex" }}>
-            <div style={{ flex: Math.max(lower, 0),                  background: "#bbf7d0" }} />
-            <div style={{ flex: Math.max(upper - lower, 0),          background: "#dbeafe" }} />
-            <div style={{ flex: Math.max(actualBarMax - upper, 0),   background: "#fecaca" }} />
-            <div style={{ position: "absolute", top: 0, bottom: 0, left: `${actualRatePos}%`, width: 3, background: "#1a1a1a", borderRadius: 2, transition: "left 0.08s", boxShadow: "0 0 4px rgba(0,0,0,0.25)" }} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#bbb", marginTop: 5, flexWrap: "wrap", gap: 2 }}>
-            <span style={{ color: "#16a34a", fontWeight: 500 }}>↑ {fmtPct(lower)} raise</span>
-            <span style={{ color: "#dc2626", fontWeight: 500 }}>{fmtPct(upper)} cut ↑</span>
-          </div>
-        </div>
-
-        <div style={{ padding: "16px 20px", borderRadius: 10, background: actualS.bg, border: `1px solid ${actualS.border}`, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 26 }}>{actualS.emoji}</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 15.5, color: actualS.color, marginBottom: 3 }}>{actualS.label}</div>
-            <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>
-              {actualStatus === "ok"       && `Your rate of ${fmtPct(actualRate)} is within the ${fmtPct(lower)}–${fmtPct(upper)} safe zone. No adjustment needed.`}
-              {actualStatus === "cut"      && `Your rate of ${fmtPct(actualRate)} crossed the upper guardrail (${fmtPct(upper)}). Apply a standard ${adjust}% spending cut.`}
-              {actualStatus === "raise"    && `Your rate of ${fmtPct(actualRate)} dropped below the lower guardrail (${fmtPct(lower)}). Apply a standard ${adjust}% spending increase.`}
+          {/* Status box (full width) */}
+          <div style={{ padding: "16px 20px", borderRadius: 10, background: actualS.bg, border: `1px solid ${actualS.border}`, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 26 }}>{actualS.emoji}</span>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontWeight: 700, fontSize: 15.5, color: actualS.color, marginBottom: 3 }}>{actualS.label}</div>
+              <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>
+                {actualStatus === "ok"       && `Your rate of ${fmtPct(actualRate)} is within the ${fmtPct(lower)}–${fmtPct(upper)} safe zone. No adjustment needed.`}
+                {actualStatus === "cut"      && `Your rate of ${fmtPct(actualRate)} crossed the upper guardrail (${fmtPct(upper)}). Apply a standard ${adjust}% spending cut.`}
+                {actualStatus === "raise"    && `Your rate of ${fmtPct(actualRate)} dropped below the lower guardrail (${fmtPct(lower)}). Apply a standard ${adjust}% spending increase.`}
+              </div>
             </div>
+            {actualStatus !== "ok" && (
+              <div style={{ textAlign: "right", minWidth: 145 }}>
+                <div style={{ fontSize: 11.5, color: "#888", marginBottom: 2 }}>New annual spending</div>
+                <div style={{ fontSize: 22, fontWeight: 750 }}>{fmtMoney(actualNewTotalSpending)}</div>
+                <div style={{ fontSize: 13, color: "#777" }}>{fmtMoney(actualNewTotalSpending / 12)}/mo</div>
+                {annualFixed > 0 && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{fmtMoney(actualNewNetWithdrawal)}/yr from portfolio</div>}
+                <div style={{ fontSize: 11, color: actualS.color, marginTop: 3, fontWeight: 600 }}>
+                  {actualIsMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(actualNewTotalSpending - withdrawal))}/yr
+                </div>
+              </div>
+            )}
           </div>
-          {actualStatus !== "ok" && (
-            <div style={{ textAlign: "right", minWidth: 145 }}>
-              <div style={{ fontSize: 11.5, color: "#888", marginBottom: 2 }}>New annual spending</div>
-              <div style={{ fontSize: 22, fontWeight: 750 }}>{fmtMoney(actualNewTotalSpending)}</div>
-              <div style={{ fontSize: 13, color: "#777" }}>{fmtMoney(actualNewTotalSpending / 12)}/mo</div>
-              {annualFixed > 0 && <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{fmtMoney(actualNewNetWithdrawal)}/yr from portfolio</div>}
-              <div style={{ fontSize: 11, color: actualS.color, marginTop: 3, fontWeight: 600 }}>
-                {actualIsMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(actualNewTotalSpending - withdrawal))}/yr
+
+          {actualStillOutside && (
+            <div style={{ padding: "16px 20px", borderRadius: 10, background: "#fefce8", border: "1px solid #fde047", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 22 }}>⚠️</span>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: "#854d0e", marginBottom: 3, display: "flex", alignItems: "center" }}>
+                  Adjustment Insufficient — Midpoint Reset Available <TooltipIcon tip={TIPS.midpoint} />
+                </div>
+                <div style={{ fontSize: 13, color: "#713f12", lineHeight: 1.55 }}>
+                  After a {adjust}% adjustment, your rate would still be <strong>{fmtPct(actualPostAdjRate)}</strong> — outside the safe zone. A midpoint reset targets <strong>{fmtPct(midpointRate)}</strong>, the center of your guardrail band.
+                </div>
+              </div>
+              <div style={{ textAlign: "right", minWidth: 155 }}>
+                <div style={{ fontSize: 11.5, color: "#92400e", marginBottom: 2 }}>Midpoint spending</div>
+                <div style={{ fontSize: 20, fontWeight: 750, color: "#78350f" }}>{fmtMoney(actualMidpointTotalSpending)}</div>
+                <div style={{ fontSize: 13, color: "#92400e" }}>{fmtMoney(actualMidpointTotalSpending / 12)}/mo</div>
+                <div style={{ fontSize: 11, color: "#b45309", marginBottom: 8, fontWeight: 500 }}>
+                  {actualIsMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(actualMidpointTotalSpending - withdrawal))}/yr from current
+                </div>
+                <button onClick={applyMidpointReset}
+                  style={{ background: "#d97706", color: "#fff", border: "none", borderRadius: 7, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }}
+                  onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = "#b45309"}
+                  onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "#d97706"}>
+                  Apply Midpoint Reset
+                </button>
               </div>
             </div>
           )}
         </div>
-
-        {actualStillOutside && (
-          <div style={{ marginTop: 12, padding: "16px 20px", borderRadius: 10, background: "#fefce8", border: "1px solid #fde047", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 22 }}>⚠️</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: "#854d0e", marginBottom: 3, display: "flex", alignItems: "center" }}>
-                Adjustment Insufficient — Midpoint Reset Available <TooltipIcon tip={TIPS.midpoint} />
-              </div>
-              <div style={{ fontSize: 13, color: "#713f12", lineHeight: 1.55 }}>
-                After a {adjust}% adjustment, your rate would still be <strong>{fmtPct(actualPostAdjRate)}</strong> — outside the safe zone. A midpoint reset targets <strong>{fmtPct(midpointRate)}</strong>, the center of your guardrail band.
-              </div>
-            </div>
-            <div style={{ textAlign: "right", minWidth: 155 }}>
-              <div style={{ fontSize: 11.5, color: "#92400e", marginBottom: 2 }}>Midpoint spending</div>
-              <div style={{ fontSize: 20, fontWeight: 750, color: "#78350f" }}>{fmtMoney(actualMidpointTotalSpending)}</div>
-              <div style={{ fontSize: 13, color: "#92400e" }}>{fmtMoney(actualMidpointTotalSpending / 12)}/mo</div>
-              <div style={{ fontSize: 11, color: "#b45309", marginBottom: 8, fontWeight: 500 }}>
-                {actualIsMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(actualMidpointTotalSpending - withdrawal))}/yr from current
-              </div>
-              <button onClick={applyMidpointReset}
-                style={{ background: "#d97706", color: "#fff", border: "none", borderRadius: 7, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }}
-                onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.background = "#b45309"}
-                onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.background = "#d97706"}>
-                Apply Midpoint Reset
-              </button>
-            </div>
-          </div>
-        )}
       </Card>
 
       {/* ── ANNUAL HISTORY ── */}
