@@ -8,7 +8,6 @@ const fmtPct    = (n: number) => n.toFixed(2) + "%";
 const DEFAULTS = {
   portfolio: 1800000, withdrawal: 85000,
   upper: 6, lower: 4, adjust: 10,
-  extWidth: 1, extAdjust: 5,
   ret: 6, inf: 3,
   symmetric: false, prosperity: true,
   currentAge: 65, planToAge: 90,
@@ -57,9 +56,7 @@ const TIPS = {
   withdrawal:           "Your total planned annual spending in retirement — before subtracting any fixed income.",
   upper:                "If your portfolio withdrawal rate rises above this level, you reduce spending. Commonly set around 5–6%.",
   lower:                "If your portfolio withdrawal rate falls below this level, you can increase spending. Commonly set around 4–5%.",
-  adjust:               "The percentage by which you raise or cut spending each time a standard guardrail is triggered.",
-  extWidth:             "How far beyond a guardrail the rate must travel before the extended adjustment applies.",
-  extAdjust:            "The larger spending adjustment applied when your withdrawal rate enters the extended zone.",
+  adjust:               "The percentage by which you raise or cut spending each time a guardrail is triggered. Guyton-Klinger uses 10%.",
   ret:                  "The average annual growth rate you expect from your portfolio before inflation.",
   inf:                  "The expected annual rise in prices. Used to adjust withdrawals upward in years when no guardrail is triggered.",
   symmetric:            "When enabled, the upper and lower guardrails are kept equidistant from your initial withdrawal rate.",
@@ -135,15 +132,11 @@ const STATUS = {
   ok:       { label: "Within Guardrails",           emoji: "✅", color: "#1d6fbf", bg: "#eff6ff", border: "#bfdbfe" },
   cut:      { label: "Cut Spending",                emoji: "⬇️",  color: "#b91c1c", bg: "#fef2f2", border: "#fecaca" },
   raise:    { label: "Raise Spending",              emoji: "⬆️",  color: "#15803d", bg: "#f0fdf4", border: "#bbf7d0" },
-  extCut:   { label: "Significant Cut Required",    emoji: "🚨", color: "#7f1d1d", bg: "#fff0f0", border: "#fca5a5" },
-  extRaise: { label: "Significant Raise Available", emoji: "🎉", color: "#14532d", bg: "#f0fdf4", border: "#86efac" },
 };
 
-function getStatus(rate: number, lower: number, upper: number, extWidth: number) {
-  if (rate > upper + extWidth) return "extCut";
-  if (rate > upper)            return "cut";
-  if (rate < lower - extWidth) return "extRaise";
-  if (rate < lower)            return "raise";
+function getStatus(rate: number, lower: number, upper: number) {
+  if (rate > upper) return "cut";
+  if (rate < lower) return "raise";
   return "ok";
 }
 
@@ -153,8 +146,6 @@ export default function GuardrailsCalc() {
   const [upper,                 setUpperRaw]              = useState(() => loadSaved().upper);
   const [lower,                 setLowerRaw]              = useState(() => loadSaved().lower);
   const [adjust,                setAdjust]                = useState(() => loadSaved().adjust);
-  const [extWidth,              setExtWidth]              = useState(() => loadSaved().extWidth);
-  const [extAdjust,             setExtAdjust]             = useState(() => loadSaved().extAdjust);
   const [ret,                   setRet]                   = useState(() => loadSaved().ret);
   const [inf,                   setInf]                   = useState(() => loadSaved().inf);
   const [sim,                   setSim]                   = useState(() => loadSaved().portfolio);
@@ -185,7 +176,7 @@ export default function GuardrailsCalc() {
   const applySettings = (s: Settings) => {
     setPortfolioRaw(s.portfolio); setSim(s.portfolio);
     setWithdrawalRaw(s.withdrawal); setUpperRaw(s.upper); setLowerRaw(s.lower);
-    setAdjust(s.adjust); setExtWidth(s.extWidth); setExtAdjust(s.extAdjust);
+    setAdjust(s.adjust);
     setRet(s.ret); setInf(s.inf); setSymmetric(s.symmetric); setProsperity(s.prosperity);
     setCurrentAge(s.currentAge); setPlanToAge(s.planToAge);
     setFixedIncome(s.fixedIncome); setFixedIncomeInflation(s.fixedIncomeInflation);
@@ -201,8 +192,12 @@ export default function GuardrailsCalc() {
     setPrevWithdrawal(null);
   };
 
-  const initialRate = portfolio > 0 ? (withdrawal / portfolio) * 100 : 0;
   const annualFixed = fixedIncome * 12;
+  const netPortfolioWithdrawal = Math.max(0, withdrawal - annualFixed);
+  // Guyton-Klinger operates on the portfolio draw rate. When fixed income (SS/pension)
+  // covers part of spending, the guardrails must track the NET draw — not gross spending —
+  // so the band and the status marker share the same basis.
+  const initialRate = portfolio > 0 ? (netPortfolioWithdrawal / portfolio) * 100 : 0;
 
   const setUpper = (v: number) => { setUpperRaw(v); if (symmetric) setLowerRaw(parseFloat((initialRate - (v - initialRate)).toFixed(2))); };
   const setLower = (v: number) => { setLowerRaw(v); if (symmetric) setUpperRaw(parseFloat((initialRate + (initialRate - v)).toFixed(2))); };
@@ -219,7 +214,7 @@ export default function GuardrailsCalc() {
   const handleSave = () => {
     const settings: Settings = {
       portfolio, withdrawal, upper, lower, adjust,
-      extWidth, extAdjust, ret, inf,
+      ret, inf,
       symmetric, prosperity, currentAge, planToAge,
       fixedIncome, fixedIncomeInflation, prevPortfolio,
     };
@@ -234,7 +229,7 @@ export default function GuardrailsCalc() {
 
   const currentSettings = (): Settings => ({
     portfolio, withdrawal, upper, lower, adjust,
-    extWidth, extAdjust, ret, inf,
+    ret, inf,
     symmetric, prosperity, currentAge, planToAge,
     fixedIncome, fixedIncomeInflation, prevPortfolio,
   });
@@ -275,11 +270,10 @@ export default function GuardrailsCalc() {
     }
   };
 
-  const netPortfolioWithdrawal = Math.max(0, withdrawal - annualFixed);
   const simRate        = sim > 0 ? (netPortfolioWithdrawal / sim) * 100 : 0;
   const actualRate     = portfolio > 0 ? (netPortfolioWithdrawal / portfolio) * 100 : 0;
-  const guardStatus    = getStatus(simRate, lower, upper, extWidth);
-  const actualStatus   = getStatus(actualRate, lower, upper, extWidth);
+  const guardStatus    = getStatus(simRate, lower, upper);
+  const actualStatus   = getStatus(actualRate, lower, upper);
   const portfolioDeclined = prevPortfolio > 0 && portfolio < prevPortfolio;
 
   const handleFinalize = () => {
@@ -297,7 +291,7 @@ export default function GuardrailsCalc() {
     setPrevPortfolio(portfolio);
     const settings: Settings = {
       portfolio, withdrawal, upper, lower, adjust,
-      extWidth, extAdjust, ret, inf,
+      ret, inf,
       symmetric, prosperity, currentAge, planToAge,
       fixedIncome, fixedIncomeInflation, prevPortfolio: portfolio,
     };
@@ -315,34 +309,32 @@ export default function GuardrailsCalc() {
     setConfirmDeleteIdx(null);
   };
   // Sim-based (slider) derived values
-  const adjPct      = (guardStatus === "extCut" || guardStatus === "extRaise") ? extAdjust : adjust;
-  const newTotalSpending =
-    guardStatus === "cut"   || guardStatus === "extCut"   ? withdrawal * (1 - adjPct / 100) :
-    guardStatus === "raise" || guardStatus === "extRaise" ? withdrawal * (1 + adjPct / 100) : withdrawal;
+  // G-K applies the adjustment to the portfolio draw, which is what the guardrail rate measures.
+  const newNetWithdrawal =
+    guardStatus === "cut"   ? netPortfolioWithdrawal * (1 - adjust / 100) :
+    guardStatus === "raise" ? netPortfolioWithdrawal * (1 + adjust / 100) : netPortfolioWithdrawal;
+  const newTotalSpending = newNetWithdrawal + annualFixed;
 
   const invalidGuardrails  = lower >= upper;
   const invalidAges        = planToAge <= currentAge;
-  const extLower = lower - extWidth;
-  const extUpper = upper + extWidth;
 
   // Actual portfolio derived values (always-visible status section)
   const midpointRate = (upper + lower) / 2;
-  const actualAdjPct = (actualStatus === "extCut" || actualStatus === "extRaise") ? extAdjust : adjust;
-  const actualNewTotalSpending =
-    actualStatus === "cut"   || actualStatus === "extCut"   ? withdrawal * (1 - actualAdjPct / 100) :
-    actualStatus === "raise" || actualStatus === "extRaise" ? withdrawal * (1 + actualAdjPct / 100) : withdrawal;
-  const actualNewNetWithdrawal = Math.max(0, actualNewTotalSpending - annualFixed);
+  const actualNewNetWithdrawal =
+    actualStatus === "cut"   ? netPortfolioWithdrawal * (1 - adjust / 100) :
+    actualStatus === "raise" ? netPortfolioWithdrawal * (1 + adjust / 100) : netPortfolioWithdrawal;
+  const actualNewTotalSpending = actualNewNetWithdrawal + annualFixed;
   const actualPostAdjRate = portfolio > 0 ? (actualNewNetWithdrawal / portfolio) * 100 : 0;
   const actualStillOutside = actualStatus !== "ok" && (actualPostAdjRate > upper || actualPostAdjRate < lower);
   const actualMidpointTotalSpending = (midpointRate / 100) * portfolio + annualFixed;
   const actualIsMidpointCut = actualMidpointTotalSpending < withdrawal;
   const applyMidpointReset = () => setWithdrawal(Math.round(actualMidpointTotalSpending));
-  const actualBarMax = Math.min(Math.max(extUpper * 1.4, actualRate + 0.5, 12), 22);
+  const actualBarMax = Math.min(Math.max(upper * 1.4, actualRate + 0.5, 12), 22);
   const actualRatePos = Math.min(Math.max((actualRate / actualBarMax) * 100, 1), 98);
   const actualS = STATUS[actualStatus];
 
 
-  const barMax   = Math.min(Math.max(extUpper * 1.4, simRate + 0.5, 12), 22);
+  const barMax   = Math.min(Math.max(upper * 1.4, simRate + 0.5, 12), 22);
   const simPos   = Math.min(Math.max((simRate / barMax) * 100, 1), 98);
   const s        = STATUS[guardStatus];
 
@@ -352,7 +344,7 @@ export default function GuardrailsCalc() {
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 23, fontWeight: 750, margin: "0 0 6px" }}>Guardrails Retirement Calculator</h1>
         <p style={{ color: "#888", fontSize: 13.5, margin: 0, lineHeight: 1.55 }}>
-          Model dynamic retirement spending using the Guyton-Klinger guardrails method, extended with tiered adjustment zones based on Kitces &amp; Blanchett dynamic spending research.
+          Model dynamic retirement spending using the Guyton-Klinger guardrails method.
         </p>
       </div>
 
@@ -452,7 +444,7 @@ export default function GuardrailsCalc() {
         <div style={{ marginTop: 16, padding: "13px 16px", background: "#f7f8fa", borderRadius: 8, display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
           <div>
             <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Initial Withdrawal Rate</div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{fmtPct(annualFixed > 0 ? (netPortfolioWithdrawal / portfolio) * 100 : initialRate)}</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>{fmtPct(initialRate)}</div>
             <div style={{ fontSize: 11, color: "#bbb", marginTop: 1 }}>net portfolio draw rate</div>
           </div>
           <div>
@@ -483,18 +475,14 @@ export default function GuardrailsCalc() {
             <span style={{ color: "#bbb", marginLeft: 8 }}>({fmtMoney(netPortfolioWithdrawal)}/yr net ÷ {fmtMoney(portfolio)})</span>
           </div>
           <div style={{ position: "relative", height: 26, borderRadius: 6, overflow: "hidden", display: "flex" }}>
-            <div style={{ flex: Math.max(extLower, 0),               background: "#86efac" }} />
-            <div style={{ flex: Math.max(lower - extLower, 0),       background: "#bbf7d0" }} />
+            <div style={{ flex: Math.max(lower, 0),                  background: "#bbf7d0" }} />
             <div style={{ flex: Math.max(upper - lower, 0),          background: "#dbeafe" }} />
-            <div style={{ flex: Math.max(extWidth, 0),               background: "#fecaca" }} />
-            <div style={{ flex: Math.max(actualBarMax - extUpper, 0),background: "#fca5a5" }} />
+            <div style={{ flex: Math.max(actualBarMax - upper, 0),   background: "#fecaca" }} />
             <div style={{ position: "absolute", top: 0, bottom: 0, left: `${actualRatePos}%`, width: 3, background: "#1a1a1a", borderRadius: 2, transition: "left 0.08s", boxShadow: "0 0 4px rgba(0,0,0,0.25)" }} />
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#bbb", marginTop: 5, flexWrap: "wrap", gap: 2 }}>
-            <span style={{ color: "#15803d", fontWeight: 500 }}>↑ {fmtPct(extLower)} ext. raise</span>
             <span style={{ color: "#16a34a", fontWeight: 500 }}>↑ {fmtPct(lower)} raise</span>
             <span style={{ color: "#dc2626", fontWeight: 500 }}>{fmtPct(upper)} cut ↑</span>
-            <span style={{ color: "#7f1d1d", fontWeight: 500 }}>{fmtPct(extUpper)} ext. cut ↑</span>
           </div>
         </div>
 
@@ -506,8 +494,6 @@ export default function GuardrailsCalc() {
               {actualStatus === "ok"       && `Your rate of ${fmtPct(actualRate)} is within the ${fmtPct(lower)}–${fmtPct(upper)} safe zone. No adjustment needed.`}
               {actualStatus === "cut"      && `Your rate of ${fmtPct(actualRate)} crossed the upper guardrail (${fmtPct(upper)}). Apply a standard ${adjust}% spending cut.`}
               {actualStatus === "raise"    && `Your rate of ${fmtPct(actualRate)} dropped below the lower guardrail (${fmtPct(lower)}). Apply a standard ${adjust}% spending increase.`}
-              {actualStatus === "extCut"   && `Your rate of ${fmtPct(actualRate)} is in the extended zone (beyond ${fmtPct(extUpper)}). Apply a larger ${extAdjust}% cut — portfolio stress is significant.`}
-              {actualStatus === "extRaise" && `Your rate of ${fmtPct(actualRate)} is in the extended zone (below ${fmtPct(extLower)}). Portfolio growth supports a larger ${extAdjust}% spending increase.`}
             </div>
           </div>
           {actualStatus !== "ok" && (
@@ -519,9 +505,6 @@ export default function GuardrailsCalc() {
               <div style={{ fontSize: 11, color: actualS.color, marginTop: 3, fontWeight: 600 }}>
                 {actualIsMidpointCut ? "−" : "+"}{fmtMoney(Math.abs(actualNewTotalSpending - withdrawal))}/yr
               </div>
-              {(actualStatus === "extCut" || actualStatus === "extRaise") && (
-                <div style={{ fontSize: 10.5, marginTop: 4, color: "#999", background: "#f3f4f6", borderRadius: 5, padding: "2px 7px" }}>Extended zone — {extAdjust}% adj.</div>
-              )}
             </div>
           )}
         </div>
@@ -534,7 +517,7 @@ export default function GuardrailsCalc() {
                 Adjustment Insufficient — Midpoint Reset Available <TooltipIcon tip={TIPS.midpoint} />
               </div>
               <div style={{ fontSize: 13, color: "#713f12", lineHeight: 1.55 }}>
-                After a {actualAdjPct}% adjustment, your rate would still be <strong>{fmtPct(actualPostAdjRate)}</strong> — outside the safe zone. A midpoint reset targets <strong>{fmtPct(midpointRate)}</strong>, the center of your guardrail band.
+                After a {adjust}% adjustment, your rate would still be <strong>{fmtPct(actualPostAdjRate)}</strong> — outside the safe zone. A midpoint reset targets <strong>{fmtPct(midpointRate)}</strong>, the center of your guardrail band.
               </div>
             </div>
             <div style={{ textAlign: "right", minWidth: 155 }}>
@@ -606,7 +589,7 @@ export default function GuardrailsCalc() {
         <button onClick={() => setGuardrailsOpen(o => !o)}
           style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Guardrail Zones &amp; Extended Zones</h2>
+            <h2 style={{ fontSize: 15, fontWeight: 650, margin: 0, color: "#222" }}>Guardrail Zones</h2>
             {guardrailsLocked && (
               <span style={{ fontSize: 11, fontWeight: 600, color: "#92400e", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 20, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 3 }}>
                 🔒 Locked
@@ -665,18 +648,12 @@ export default function GuardrailsCalc() {
 
             <Divider />
 
-            <SubHeading>Extended Zones <span style={{ fontWeight: 400, color: "#bbb", textTransform: "none", letterSpacing: 0 }}>— larger adjustments for severe portfolio moves</span></SubHeading>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "13px 22px" }}>
-              <NumInput label="Extended Zone Width"      tip={TIPS.extWidth}  value={extWidth}  onChange={setExtWidth}  suffix="%" step={0.1} min={0.1} max={10} disabled={guardrailsLocked} />
-              <NumInput label="Extended Zone Adjustment" tip={TIPS.extAdjust} value={extAdjust} onChange={setExtAdjust} suffix="%" step={1}   min={1}   max={75} disabled={guardrailsLocked} />
-            </div>
-            <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, alignItems: "center" }}>
+            <SubHeading>Zone Map</SubHeading>
+            <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, alignItems: "center" }}>
               {[
-                { color: "#15803d", bg: "#dcfce7", label: `< ${fmtPct(extLower)} Extended raise` },
-                { color: "#16a34a", bg: "#bbf7d0", label: `${fmtPct(extLower)}–${fmtPct(lower)} Raise` },
+                { color: "#16a34a", bg: "#bbf7d0", label: `< ${fmtPct(lower)} Raise` },
                 { color: "#1d6fbf", bg: "#dbeafe", label: `${fmtPct(lower)}–${fmtPct(upper)} Safe zone` },
-                { color: "#b91c1c", bg: "#fecaca", label: `${fmtPct(upper)}–${fmtPct(extUpper)} Cut` },
-                { color: "#7f1d1d", bg: "#fca5a5", label: `> ${fmtPct(extUpper)} Extended cut` },
+                { color: "#b91c1c", bg: "#fecaca", label: `> ${fmtPct(upper)} Cut` },
               ].map(z => (
                 <span key={z.label} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 20, background: z.bg, color: z.color, fontWeight: 500 }}>
                   <span style={{ width: 8, height: 8, borderRadius: "50%", background: z.color, flexShrink: 0 }} />{z.label}
@@ -703,6 +680,14 @@ export default function GuardrailsCalc() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontWeight: 700, fontSize: 15 }}>{fmtMoney(sim)}</span>
                   {sim !== portfolio && (
+                    <span style={{ fontSize: 12.5, fontWeight: 600, borderRadius: 20, padding: "2px 9px",
+                      color: sim < portfolio ? "#b91c1c" : "#15803d",
+                      background: sim < portfolio ? "#fef2f2" : "#f0fdf4",
+                      border: `1px solid ${sim < portfolio ? "#fecaca" : "#bbf7d0"}` }}>
+                      {sim < portfolio ? "▼" : "▲"} {Math.abs(((sim - portfolio) / portfolio) * 100).toFixed(1)}%
+                    </span>
+                  )}
+                  {sim !== portfolio && (
                     <button onClick={() => setSim(portfolio)} title="Reset to starting portfolio value"
                       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%", border: "1px solid #e2e2e2", background: "#fff", color: "#888", fontSize: 13, cursor: "pointer", lineHeight: 1, transition: "all 0.15s", padding: 0 }}
                       onMouseEnter={e => { e.currentTarget.style.background = "#eff6ff"; e.currentTarget.style.color = "#2563eb"; e.currentTarget.style.borderColor = "#bfdbfe"; }}
@@ -725,18 +710,14 @@ export default function GuardrailsCalc() {
               <span style={{ color: "#bbb", marginLeft: 8 }}>({fmtMoney(netPortfolioWithdrawal)}/yr net ÷ {fmtMoney(sim)})</span>
             </div>
             <div style={{ position: "relative", height: 26, borderRadius: 6, overflow: "hidden", display: "flex" }}>
-              <div style={{ flex: Math.max(extLower, 0),          background: "#86efac" }} />
-              <div style={{ flex: Math.max(lower - extLower, 0),  background: "#bbf7d0" }} />
-              <div style={{ flex: Math.max(upper - lower, 0),     background: "#dbeafe" }} />
-              <div style={{ flex: Math.max(extWidth, 0),          background: "#fecaca" }} />
-              <div style={{ flex: Math.max(barMax - extUpper, 0), background: "#fca5a5" }} />
+              <div style={{ flex: Math.max(lower, 0),          background: "#bbf7d0" }} />
+              <div style={{ flex: Math.max(upper - lower, 0),  background: "#dbeafe" }} />
+              <div style={{ flex: Math.max(barMax - upper, 0), background: "#fecaca" }} />
               <div style={{ position: "absolute", top: 0, bottom: 0, left: `${simPos}%`, width: 3, background: "#1a1a1a", borderRadius: 2, transition: "left 0.08s", boxShadow: "0 0 4px rgba(0,0,0,0.25)" }} />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10.5, color: "#bbb", marginTop: 5, flexWrap: "wrap", gap: 2 }}>
-              <span style={{ color: "#15803d", fontWeight: 500 }}>↑ {fmtPct(extLower)} ext. raise</span>
               <span style={{ color: "#16a34a", fontWeight: 500 }}>↑ {fmtPct(lower)} raise</span>
               <span style={{ color: "#dc2626", fontWeight: 500 }}>{fmtPct(upper)} cut ↑</span>
-              <span style={{ color: "#7f1d1d", fontWeight: 500 }}>{fmtPct(extUpper)} ext. cut ↑</span>
             </div>
             {guardStatus !== "ok" && (
               <div style={{ marginTop: 12, padding: "12px 16px", borderRadius: 10, background: s.bg, border: `1px solid ${s.border}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -746,8 +727,6 @@ export default function GuardrailsCalc() {
                   <div style={{ fontSize: 12.5, color: "#555" }}>
                     {guardStatus === "cut"      && `At ${fmtPct(simRate)}, a ${adjust}% cut → ${fmtMoney(newTotalSpending)}/yr`}
                     {guardStatus === "raise"    && `At ${fmtPct(simRate)}, a ${adjust}% raise → ${fmtMoney(newTotalSpending)}/yr`}
-                    {guardStatus === "extCut"   && `At ${fmtPct(simRate)}, a ${extAdjust}% cut → ${fmtMoney(newTotalSpending)}/yr`}
-                    {guardStatus === "extRaise" && `At ${fmtPct(simRate)}, a ${extAdjust}% raise → ${fmtMoney(newTotalSpending)}/yr`}
                   </div>
                 </div>
               </div>

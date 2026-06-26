@@ -7,7 +7,9 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "PowerShell(npx tsc -b 2>&1 | Select-Object -First 30; \"exit: $LASTEXITCODE\")",
+      "PowerShell(npx tsc -b 2>&1 | Select-Object -First 40; \"exit: $LASTEXITCODE\")"
     ]
   }
 }
