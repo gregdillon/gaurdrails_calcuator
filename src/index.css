@@ -89,3 +89,11 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+/* On narrow screens the summary metrics wrap below the status graph — center them. */
+@media (max-width: 600px) {
+  .summary-metrics {
+    width: 100%;
+    justify-content: center;
+  }
+}

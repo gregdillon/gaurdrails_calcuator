@@ -461,7 +461,7 @@ export default function GuardrailsCalc() {
               </div>
             </div>
             {/* Key metrics */}
-            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+            <div className="summary-metrics" style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
               <div>
                 <div style={{ fontSize: 11.5, color: "#999", marginBottom: 2 }}>Annual Spending</div>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(withdrawal)}</div>
@@ -484,7 +484,6 @@ export default function GuardrailsCalc() {
 
           {/* Status box (full width) */}
           <div style={{ padding: "16px 20px", borderRadius: 10, background: actualS.bg, border: `1px solid ${actualS.border}`, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 26 }}>{actualS.emoji}</span>
             <div style={{ flex: 1, minWidth: 200 }}>
               <div style={{ fontWeight: 700, fontSize: 15.5, color: actualS.color, marginBottom: 3 }}>{actualS.label}</div>
               <div style={{ fontSize: 13, color: "#555", lineHeight: 1.5 }}>
