@@ -40,7 +40,7 @@ const TIPS: Record<string, string> = {
   endAge: "The age through which your plan needs to last. Common choices: 90 (typical), 95–100 (conservative).",
   ret: "Expected average annual portfolio return, before inflation.",
   vol: "Annual volatility (standard deviation) of returns. ~12% is roughly historical for a 60/40 portfolio; ~15-18% for all-equity.",
-  inf: "Expected annual inflation, used to grow withdrawals over time in the simulation.",
+  inf: "Expected annual inflation. The simulation runs in today's dollars, so this converts your nominal expected return to a real return and erodes any non-COLA Social Security over time.",
   targetSuccess: "Your comfort target for probability of plan success. 85-90% is a common industry default — high enough to be safe, not so high that you're needlessly underspending.",
   lowerBand: "If simulated success probability falls below this, your plan is taking on too much risk — spending is cut.",
   upperBand: "If simulated success probability rises above this, you have more room than needed — spending can increase.",
@@ -138,7 +138,10 @@ function simulateSuccess(p: SimParams) {
         r = series![idx] - hc;
         blockPos--;
       } else {
-        r = randNormal(retMean / 100, retVol / 100);
+        // The whole simulation runs in real (inflation-adjusted) dollars: the historical
+        // series is real, withdrawals are held constant in real terms, and non-COLA SS is
+        // discounted to real. So the nominal expected return must be converted to real here.
+        r = randNormal((retMean - inf) / 100, retVol / 100);
       }
 
       if (dynamic && bal > 0) {
@@ -401,7 +404,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
               const idx = (bs + (bl - bp)) % nH;
               rr = ser![idx] - hc; bp--;
             } else {
-              rr = randNormal(r / 100, v / 100);
+              rr = randNormal((r - infl) / 100, v / 100);
             }
             bal = bal * (1 + rr) - w;
             if (bal <= 0) { ok = false; bal = 0; break; }
