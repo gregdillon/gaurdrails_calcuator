@@ -54,6 +54,8 @@ const TIPS: Record<string, string> = {
   stockPct: "Your stock allocation. The historical engine blends real US stock and bond returns by this mix each year. Bonds are the remainder.",
   blockLen: "Length of the contiguous block sampled from history. Longer blocks preserve more of the real sequence (e.g. multi-year crashes and recoveries stay intact); 1 = independent single years.",
   spendFloor: "The lowest your spending can be cut to under dynamic guardrails. Cuts won't drive spending below this — it's your essential-expenses backstop.",
+  bridgeGuardrail: "When enabled, the probability that your portfolio survives the pre-SS bridge period alone is treated as a safety floor. If bridge survival falls below the threshold you set, the spending recommendation is made more conservative — even if the full-plan success rate is in the safe zone. This protects against the period most exposed to sequence-of-returns risk.",
+  bridgeFloor: "The minimum bridge survival rate you require. If the portfolio's probability of reaching SS claim age falls below this, a spending cut is recommended regardless of the full-plan success rate. 85% is a reasonable default — the bridge is a short, high-risk window with no SS income buffer.",
 };
 
 function clamp(n: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, n)); }
@@ -276,6 +278,7 @@ type CalcResult = {
   staticSuccess: number;
   dynamicSuccess: number;
   dynamicMedianSpend: number;
+  bridgeOverrode: boolean;
 };
 
 type SensPoint = { withdrawal: number; success: number; current?: number };
@@ -306,6 +309,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const [blockLen, setBlockLen] = useState<NumOrStr>(7);
   const [dynamicMode, setDynamicMode] = useState(true);
   const [spendFloor, setSpendFloor] = useState<NumOrStr>(60000);
+  const [bridgeGuardrail, setBridgeGuardrail] = useState(false);
+  const [bridgeFloor, setBridgeFloor] = useState<NumOrStr>(85);
 
   const liveDataRef = useRef<Record<string, unknown>>({});
   const runCalcRef = useRef<() => void>(() => {});
@@ -330,7 +335,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
     targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials,
     ssEnabled, ssClaimAge, ssMonthly, ssCola,
-    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor,
+    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor,
   ]);
 
   const runCalc = () => {
@@ -373,34 +378,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
 
       const success = dynamicMode ? dynRes.success : staticRes.success;
       const zone = getZone(success, lb, ub, ew);
-      const isExtended = zone === "extCut" || zone === "extRaise";
-      const pct = isExtended ? eadj : adj;
 
-      let recommended = w;
-      if (zone === "cut" || zone === "extCut") recommended = w * (1 - pct / 100);
-      else if (zone === "raise" || zone === "extRaise") recommended = w * (1 + pct / 100);
-      else recommended = w * (1 + infl / 100);
-
-      const successAfter = simulateSuccess({ portfolio: p, withdrawal: recommended, years, retMean: r, retVol: v, trials: tr, ...simBase, dynamic: dynamicMode, ...gkParams }).success;
-
-      const points: SensPoint[] = [];
-      const steps = 10;
-      const minW = w * 0.5, maxW = w * 1.6;
-      const chartTrials = Math.min(tr, 1000);
-      for (let i = 0; i <= steps; i++) {
-        const wi = minW + (maxW - minW) * (i / steps);
-        const wiInit = p > 0 ? (wi / p) * 100 : 0;
-        const gkP = dynamicMode
-          ? { dynamic: true, gkUpper: wiInit * 1.2, gkLower: wiInit * 0.8, gkAdjust: adj, gkExtWidth: wiInit * 0.1, gkExtAdjust: eadj, spendFloor: num(spendFloor, 0) }
-          : { dynamic: false };
-        const s = simulateSuccess({ portfolio: p, withdrawal: wi, years, retMean: r, retVol: v, trials: chartTrials, ...simBase, ...gkP }).success;
-        points.push({ withdrawal: wi, success: s });
-      }
-      points.push({ withdrawal: w, success, current: success });
-      points.sort((a, b) => a.withdrawal - b.withdrawal);
-
-      const sustainable = withdrawalForTargetSuccess({ portfolio: p, years, retMean: r, retVol: v, trials: tr, targetSuccess: tgt, ssParams: simBase });
-
+      // Compute bridge first so it can inform the spending recommendation when bridgeGuardrail is on
       let bridge: BridgeResult | null = null;
       if (ssEnabled && num(ssClaimAge) > num(currentAge)) {
         const bridgeYears = num(ssClaimAge) - num(currentAge);
@@ -436,8 +415,46 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         bridge = { years: bridgeYears, claimAge: num(ssClaimAge), survive: (bridgeSurvive / tr) * 100, median, p10 };
       }
 
+      // Bridge guardrail: a one-sided safety floor — if bridge survival is below the user's
+      // threshold, the main zone is capped at "cut". Bridge survival being high is not a
+      // signal to raise spending, just confirmation the bridge is safe.
+      let finalZone = zone;
+      let bridgeOverrode = false;
+      if (bridgeGuardrail && bridge && bridge.survive < num(bridgeFloor, 85)) {
+        const scoreOf = (z: string) => z === "extCut" ? -2 : z === "cut" ? -1 : z === "hold" ? 0 : z === "raise" ? 1 : 2;
+        if (scoreOf(zone) > scoreOf("cut")) { finalZone = "cut"; bridgeOverrode = true; }
+      }
+
+      const isExtended = finalZone === "extCut" || finalZone === "extRaise";
+      const pct = isExtended ? eadj : adj;
+
+      let recommended = w;
+      if (finalZone === "cut" || finalZone === "extCut") recommended = w * (1 - pct / 100);
+      else if (finalZone === "raise" || finalZone === "extRaise") recommended = w * (1 + pct / 100);
+      else recommended = w * (1 + infl / 100);
+
+      const successAfter = simulateSuccess({ portfolio: p, withdrawal: recommended, years, retMean: r, retVol: v, trials: tr, ...simBase, dynamic: dynamicMode, ...gkParams }).success;
+
+      const points: SensPoint[] = [];
+      const steps = 10;
+      const minW = w * 0.5, maxW = w * 1.6;
+      const chartTrials = Math.min(tr, 1000);
+      for (let i = 0; i <= steps; i++) {
+        const wi = minW + (maxW - minW) * (i / steps);
+        const wiInit = p > 0 ? (wi / p) * 100 : 0;
+        const gkP = dynamicMode
+          ? { dynamic: true, gkUpper: wiInit * 1.2, gkLower: wiInit * 0.8, gkAdjust: adj, gkExtWidth: wiInit * 0.1, gkExtAdjust: eadj, spendFloor: num(spendFloor, 0) }
+          : { dynamic: false };
+        const s = simulateSuccess({ portfolio: p, withdrawal: wi, years, retMean: r, retVol: v, trials: chartTrials, ...simBase, ...gkP }).success;
+        points.push({ withdrawal: wi, success: s });
+      }
+      points.push({ withdrawal: w, success, current: success });
+      points.sort((a, b) => a.withdrawal - b.withdrawal);
+
+      const sustainable = withdrawalForTargetSuccess({ portfolio: p, years, retMean: r, retVol: v, trials: tr, targetSuccess: tgt, ssParams: simBase });
+
       setResult({
-        success, zone, recommended, successAfter, bridge,
+        success, zone: finalZone, recommended, successAfter, bridge, bridgeOverrode,
         staticSuccess: staticRes.success,
         dynamicSuccess: dynRes.success,
         dynamicMedianSpend: dynRes.medianFinalSpend,
@@ -472,6 +489,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         set("blockLen", setBlockLen);
         setB("dynamicMode", setDynamicMode);
         set("spendFloor", setSpendFloor);
+        setB("bridgeGuardrail", setBridgeGuardrail);
+        set("bridgeFloor", setBridgeFloor);
         if (d.savedAt) setSavedAt(d.savedAt);
       }
     } catch { /* no saved state */ }
@@ -487,7 +506,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
       targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
       ssEnabled, ssClaimAge, ssMonthly, ssCola,
-      engine, haircut, stockPct, blockLen, dynamicMode, spendFloor,
+      engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor,
       savedAt: ts,
     });
     try {
@@ -512,7 +531,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     setTrials(DEFAULTS.trials); setSymmetric(false);
     setSsEnabled(true); setSsClaimAge(70); setSsMonthly(4500); setSsCola(true);
     setEngine("historical"); setHaircut(2.0); setStockPct(60); setBlockLen(7);
-    setDynamicMode(true); setSpendFloor(60000);
+    setDynamicMode(true); setSpendFloor(60000); setBridgeGuardrail(false); setBridgeFloor(85);
     setTimeout(() => runCalcRef.current(), 80);
     setTimeout(() => setSaveStatus(null), 1200);
   };
@@ -545,7 +564,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
     targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
     ssEnabled, ssClaimAge, ssMonthly, ssCola,
-    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor,
+    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor,
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { onRegisterDataGetter?.(() => liveDataRef.current); }, []);
@@ -884,6 +903,23 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                   <p className="field-hint" style={{ marginTop: 4 }}>
                     {fmtMoney(num(ssMonthly) * 12)}/yr starting at age {num(ssClaimAge)} reduces the portfolio draw, not your spending.
                   </p>
+                  {num(ssClaimAge) > num(currentAge) && (
+                    <>
+                      <div className="toggle-row" style={{ marginTop: 6 }}>
+                        <span className="toggle-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          Factor bridge survival into spending decisions
+                          <button type="button" className="tip-trigger" onClick={() => setActiveTip(activeTip === "bridgeGuardrail" ? null : "bridgeGuardrail")} aria-label="About bridge guardrail">?</button>
+                        </span>
+                        <button className={`toggle-switch ${bridgeGuardrail ? "on" : ""}`} onClick={() => setBridgeGuardrail(!bridgeGuardrail)} aria-label="Toggle bridge guardrail">
+                          <span className="toggle-knob" />
+                        </button>
+                      </div>
+                      {activeTip === "bridgeGuardrail" && <p className="tip-text">{TIPS.bridgeGuardrail}</p>}
+                      {bridgeGuardrail && (
+                        <Field id="bridgeFloor" label="Bridge survival floor" value={bridgeFloor} onChange={setBridgeFloor} suffix="%" step={1} min={50} max={99} hint={`Cut spending if bridge survival falls below ${num(bridgeFloor, 85)}%.`} {...tipProps} />
+                      )}
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -1020,6 +1056,11 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                       <span className="result-stat-label">Poor case (10th pct) at {result.bridge.claimAge}</span>
                       <span className="result-stat-value">{fmtMoney(result.bridge.p10)}</span>
                     </div>
+                    {result.bridgeOverrode && (
+                      <p className="bridge-note" style={{ color: "#d97706", fontWeight: 600, marginTop: 8 }}>
+                        ⚠ Bridge survival is below the lower guardrail — this overrode the main spending recommendation.
+                      </p>
+                    )}
                     <p className="bridge-note">
                       Full {fmtMoney(num(withdrawal))} draw from the portfolio alone, before SS starts. This is the window most exposed to a bad early sequence.
                     </p>
