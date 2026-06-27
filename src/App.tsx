@@ -1,5 +1,8 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { ReactNode, CSSProperties } from "react";
+import ProbabilityGuardrailsCalculator from "./ProbabilityGuardrailsCalculator";
+
+const CALC_MODE_KEY = "guardrails_calc_mode";
 
 const fmtMoney  = (n: number) => n <= 0 ? "$0" : "$" + Math.round(n).toLocaleString();
 const fmtShort  = (n: number) => n >= 1e6 ? "$" + (n/1e6).toFixed(1)+"M" : n >= 1e3 ? "$" + (n/1e3).toFixed(0)+"K" : "$"+Math.round(n);
@@ -15,9 +18,10 @@ const DEFAULTS = {
   prevPortfolio: 0,
 };
 
-const STORAGE_KEY = "guardrails_calc_settings";
-const HISTORY_KEY = "guardrails_calc_history";
-const LOCK_KEY    = "guardrails_calc_lock";
+const STORAGE_KEY    = "guardrails_calc_settings";
+const HISTORY_KEY    = "guardrails_calc_history";
+const LOCK_KEY       = "guardrails_calc_lock";
+const PG_STORAGE_KEY = "pos-guardrails-settings";
 type Settings = typeof DEFAULTS;
 
 type HistoryRecord = {
@@ -140,7 +144,7 @@ function getStatus(rate: number, lower: number, upper: number) {
   return "ok";
 }
 
-export default function GuardrailsCalc() {
+function GuardrailsCalc({ onRegisterDataGetter }: { onRegisterDataGetter?: (fn: () => { settings: Settings; history: HistoryRecord[] }) => void }) {
   const [portfolio,             setPortfolioRaw]          = useState(() => loadSaved().portfolio);
   const [withdrawal,            setWithdrawalRaw]         = useState(() => loadSaved().withdrawal);
   const [upper,                 setUpperRaw]              = useState(() => loadSaved().upper);
@@ -159,11 +163,6 @@ export default function GuardrailsCalc() {
   const [prevWithdrawal,        setPrevWithdrawal]        = useState<number | null>(null);
   const [savedFlash,            setSavedFlash]            = useState(false);
   const [finalizeFlash,         setFinalizeFlash]         = useState(false);
-  const [showImportExport,      setShowImportExport]      = useState(false);
-  const [importTab,             setImportTab]             = useState<"export" | "import">("export");
-  const [importText,            setImportText]            = useState("");
-  const [importError,           setImportError]           = useState("");
-  const [copyFlash,             setCopyFlash]             = useState(false);
   const [guardrailsOpen,        setGuardrailsOpen]        = useState(false);
   const [simulatorOpen,         setSimulatorOpen]         = useState(false);
   const [history,               setHistory]               = useState<HistoryRecord[]>(loadHistory);
@@ -234,41 +233,11 @@ export default function GuardrailsCalc() {
     fixedIncome, fixedIncomeInflation, prevPortfolio,
   });
 
-  const exportJson = () => JSON.stringify({ settings: currentSettings(), history }, null, 2);
-
-  const handleExportCopy = async () => {
-    await navigator.clipboard.writeText(exportJson());
-    setCopyFlash(true);
-    setTimeout(() => setCopyFlash(false), 2000);
-  };
-
-  const handleExportDownload = () => {
-    const blob = new Blob([exportJson()], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "guardrails-calc.json"; a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleImport = () => {
-    try {
-      const parsed = JSON.parse(importText);
-      if (parsed.settings) {
-        const s: Settings = { ...DEFAULTS, ...parsed.settings };
-        applySettings(s);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-      }
-      if (Array.isArray(parsed.history)) {
-        setHistory(parsed.history);
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(parsed.history));
-      }
-      setImportError("");
-      setImportText("");
-      setShowImportExport(false);
-    } catch {
-      setImportError("Invalid JSON — please check your input and try again.");
-    }
-  };
+  // Keep a ref that's always current so the parent App can read live state for export
+  const liveDataRef = useRef<{ settings: Settings; history: HistoryRecord[] }>({ settings: { ...DEFAULTS }, history: [] });
+  liveDataRef.current = { settings: currentSettings(), history };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onRegisterDataGetter?.(() => liveDataRef.current); }, []);
 
   const simRate        = sim > 0 ? (netPortfolioWithdrawal / sim) * 100 : 0;
   const actualRate     = portfolio > 0 ? (netPortfolioWithdrawal / portfolio) * 100 : 0;
@@ -365,12 +334,6 @@ export default function GuardrailsCalc() {
               onMouseEnter={e => { e.currentTarget.style.background = "#dbeafe"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "#eff6ff"; }}>
               Save
-            </button>
-            <button onClick={() => { setImportTab("export"); setImportText(""); setImportError(""); setShowImportExport(true); }}
-              style={{ padding: "5px 13px", fontSize: 12.5, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer" }}
-              onMouseEnter={e => { e.currentTarget.style.background = "#f1f5f9"; }}
-              onMouseLeave={e => { e.currentTarget.style.background = "#f8fafc"; }}>
-              Data
             </button>
             <button onClick={handleFinalize} disabled={actualStatus !== "ok"}
               title={actualStatus !== "ok" ? "Spending must be within guardrails before finalizing" : "Record this year's plan and advance previous portfolio value"}
@@ -735,28 +698,159 @@ export default function GuardrailsCalc() {
 
       <p style={{ fontSize: 12, color: "#ccc", textAlign: "center", marginTop: 20 }}>For educational purposes only · Not financial advice</p>
 
-      {showImportExport && (
+    </div>
+  );
+}
+
+export default function App() {
+  const [mode, setMode] = useState<"rate" | "probability">(() => {
+    const saved = localStorage.getItem(CALC_MODE_KEY);
+    return saved === "probability" ? "probability" : "rate";
+  });
+
+  const rateDataFnRef = useRef<(() => { settings: Settings; history: HistoryRecord[] }) | null>(null);
+  const probDataFnRef = useRef<(() => Record<string, unknown>) | null>(null);
+
+  const [showDataModal, setShowDataModal] = useState(false);
+  const [dataTab, setDataTab] = useState<"export" | "import">("export");
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState("");
+  const [copyFlash, setCopyFlash] = useState(false);
+
+  const switchTo = (m: "rate" | "probability") => {
+    setMode(m);
+    localStorage.setItem(CALC_MODE_KEY, m);
+  };
+
+  const buildExportJson = () => {
+    const rate = rateDataFnRef.current?.() ?? null;
+    const probability = probDataFnRef.current?.() ?? null;
+    return JSON.stringify({ rate, probability }, null, 2);
+  };
+
+  const handleExportCopy = async () => {
+    await navigator.clipboard.writeText(buildExportJson());
+    setCopyFlash(true);
+    setTimeout(() => setCopyFlash(false), 2000);
+  };
+
+  const handleExportDownload = () => {
+    const blob = new Blob([buildExportJson()], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "guardrails-calc.json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = () => {
+    try {
+      const parsed = JSON.parse(importText);
+      // New combined format
+      if (parsed.rate) {
+        if (parsed.rate.settings) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...DEFAULTS, ...parsed.rate.settings }));
+        }
+        if (Array.isArray(parsed.rate.history)) {
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(parsed.rate.history));
+        }
+      }
+      if (parsed.probability) {
+        localStorage.setItem(PG_STORAGE_KEY, JSON.stringify(parsed.probability));
+      }
+      // Backward-compat: old rate-only export (settings at top level)
+      if (parsed.settings && !parsed.rate) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...DEFAULTS, ...parsed.settings }));
+        if (Array.isArray(parsed.history)) {
+          localStorage.setItem(HISTORY_KEY, JSON.stringify(parsed.history));
+        }
+      }
+      setImportError("");
+      setImportText("");
+      setShowDataModal(false);
+      window.location.reload();
+    } catch {
+      setImportError("Invalid JSON — please check your input and try again.");
+    }
+  };
+
+  return (
+    <>
+      <div style={{
+        position: "sticky", top: 0, zIndex: 200,
+        display: "flex", alignItems: "center",
+        padding: "10px 16px",
+        background: "#f7f7f7",
+        borderBottom: "1px solid #e8e8e8",
+      }}>
+        <div style={{ flex: 1 }} />
+        <div style={{
+          display: "inline-flex", gap: 2,
+          background: "#e8e8e8",
+          padding: 3, borderRadius: 9,
+        }}>
+          {(["rate", "probability"] as const).map(m => {
+            const active = mode === m;
+            return (
+              <button
+                key={m}
+                onClick={() => switchTo(m)}
+                style={{
+                  padding: "7px 18px",
+                  borderRadius: 7,
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: active ? 600 : 400,
+                  fontFamily: "system-ui, -apple-system, sans-serif",
+                  transition: "background 0.15s, color 0.15s",
+                  background: active ? "#fff" : "transparent",
+                  color: active ? "#1a1a1a" : "#888",
+                  boxShadow: active ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+                }}
+              >
+                {m === "rate" ? "Rate-based Guardrails" : "Probability Guardrails"}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ flex: 1, display: "flex", justifyContent: "flex-end" }}>
+          <button
+            onClick={() => { setDataTab("export"); setImportText(""); setImportError(""); setShowDataModal(true); }}
+            style={{ padding: "5px 13px", fontSize: 12.5, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#f1f5f9"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "#f8fafc"; }}
+          >
+            Data
+          </button>
+        </div>
+      </div>
+
+      {mode === "rate"
+        ? <GuardrailsCalc onRegisterDataGetter={(fn) => { rateDataFnRef.current = fn; }} />
+        : <ProbabilityGuardrailsCalculator onRegisterDataGetter={(fn) => { probDataFnRef.current = fn; }} />}
+
+      {showDataModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-          onClick={e => { if (e.target === e.currentTarget) setShowImportExport(false); }}>
+          onClick={e => { if (e.target === e.currentTarget) setShowDataModal(false); }}>
           <div style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 520, boxShadow: "0 20px 60px rgba(0,0,0,0.25)", overflow: "hidden" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 22px 0" }}>
               <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Import / Export</h2>
-              <button onClick={() => setShowImportExport(false)}
+              <button onClick={() => setShowDataModal(false)}
                 style={{ background: "none", border: "none", fontSize: 20, color: "#aaa", cursor: "pointer", lineHeight: 1, padding: "0 4px" }}>×</button>
             </div>
             <div style={{ display: "flex", gap: 0, padding: "14px 22px 0", borderBottom: "1px solid #f0f0f0" }}>
               {(["export", "import"] as const).map(tab => (
-                <button key={tab} onClick={() => { setImportTab(tab); setImportError(""); }}
-                  style={{ padding: "7px 18px", fontSize: 13, fontWeight: importTab === tab ? 600 : 400, borderRadius: "7px 7px 0 0", border: "none", background: importTab === tab ? "#fff" : "transparent", color: importTab === tab ? "#1a1a1a" : "#888", cursor: "pointer", borderBottom: importTab === tab ? "2px solid #2563eb" : "2px solid transparent", marginBottom: -1 }}>
+                <button key={tab} onClick={() => { setDataTab(tab); setImportError(""); }}
+                  style={{ padding: "7px 18px", fontSize: 13, fontWeight: dataTab === tab ? 600 : 400, borderRadius: "7px 7px 0 0", border: "none", background: dataTab === tab ? "#fff" : "transparent", color: dataTab === tab ? "#1a1a1a" : "#888", cursor: "pointer", borderBottom: dataTab === tab ? "2px solid #2563eb" : "2px solid transparent", marginBottom: -1 }}>
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
             <div style={{ padding: "20px 22px 22px" }}>
-              {importTab === "export" ? (
+              {dataTab === "export" ? (
                 <>
-                  <p style={{ fontSize: 13, color: "#666", margin: "0 0 12px", lineHeight: 1.5 }}>Copy or download your current settings and history as JSON.</p>
-                  <textarea readOnly value={exportJson()}
+                  <p style={{ fontSize: 13, color: "#666", margin: "0 0 12px", lineHeight: 1.5 }}>Copy or download your current settings and history as JSON. Includes both Rate-based and Probability Guardrails settings.</p>
+                  <textarea readOnly value={buildExportJson()}
                     style={{ width: "100%", height: 200, fontFamily: "monospace", fontSize: 12, border: "1px solid #e2e2e2", borderRadius: 8, padding: 10, resize: "none", background: "#f8fafc", color: "#374151", boxSizing: "border-box" }} />
                   <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                     <button onClick={handleExportCopy}
@@ -771,7 +865,7 @@ export default function GuardrailsCalc() {
                 </>
               ) : (
                 <>
-                  <p style={{ fontSize: 13, color: "#666", margin: "0 0 12px", lineHeight: 1.5 }}>Paste a previously exported JSON file to restore settings and history.</p>
+                  <p style={{ fontSize: 13, color: "#666", margin: "0 0 12px", lineHeight: 1.5 }}>Paste a previously exported JSON file to restore settings for both calculators. The page will reload to apply imported settings.</p>
                   <textarea value={importText} onChange={e => { setImportText(e.target.value); setImportError(""); }}
                     placeholder='Paste exported JSON here…'
                     style={{ width: "100%", height: 200, fontFamily: "monospace", fontSize: 12, border: `1px solid ${importError ? "#fca5a5" : "#e2e2e2"}`, borderRadius: 8, padding: 10, resize: "none", background: "#fff", color: "#374151", boxSizing: "border-box" }} />
@@ -786,6 +880,6 @@ export default function GuardrailsCalc() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
