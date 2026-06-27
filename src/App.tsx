@@ -775,9 +775,19 @@ export default function App() {
 
   return (
     <>
+      <style>{`
+        .data-btn-text { display: inline; }
+        .data-btn-icon { display: none; align-items: center; justify-content: center; }
+        @media (max-width: 640px) {
+          .data-btn-text { display: none; }
+          .data-btn-icon { display: inline-flex; }
+          .data-btn { padding: 5px 9px !important; }
+          .calc-toggle-btn { padding: 5px 10px !important; font-size: 11.5px !important; }
+        }
+      `}</style>
       <div style={{
         position: "sticky", top: 0, zIndex: 200,
-        display: "flex", alignItems: "center",
+        display: "flex", alignItems: "center", gap: 8,
         padding: "10px 16px",
         background: "#f7f7f7",
         borderBottom: "1px solid #e8e8e8",
@@ -793,6 +803,7 @@ export default function App() {
             return (
               <button
                 key={m}
+                className="calc-toggle-btn"
                 onClick={() => switchTo(m)}
                 style={{
                   padding: "7px 18px",
@@ -815,12 +826,20 @@ export default function App() {
         </div>
         <div style={{ flex: 1, display: "flex", justifyContent: "flex-end" }}>
           <button
+            className="data-btn"
             onClick={() => { setDataTab("export"); setImportText(""); setImportError(""); setShowDataModal(true); }}
             style={{ padding: "5px 13px", fontSize: 12.5, fontWeight: 500, borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", color: "#475569", cursor: "pointer" }}
             onMouseEnter={e => { e.currentTarget.style.background = "#f1f5f9"; }}
             onMouseLeave={e => { e.currentTarget.style.background = "#f8fafc"; }}
           >
-            Data
+            <span className="data-btn-text">Data</span>
+            <span className="data-btn-icon">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <ellipse cx="8" cy="4" rx="5" ry="2"/>
+                <path d="M3 4v8c0 1.1 2.24 2 5 2s5-.9 5-2V4"/>
+                <path d="M3 8c0 1.1 2.24 2 5 2s5-.9 5-2"/>
+              </svg>
+            </span>
           </button>
         </div>
       </div>

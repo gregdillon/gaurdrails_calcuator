@@ -310,6 +310,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const liveDataRef = useRef<Record<string, unknown>>({});
   const runCalcRef = useRef<() => void>(() => {});
 
+  const [infoOpen, setInfoOpen] = useState(false);
   const [activeTip, setActiveTip] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -578,15 +579,41 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           font-family: 'Crimson Text', Georgia, serif;
           font-size: clamp(22px, 5vw, 32px);
           font-weight: 600;
-          margin: 0 0 4px;
+          margin: 0;
         }
-        .pg-subtitle {
-          color: var(--text-dim);
-          font-size: 13.5px;
-          margin: 0 0 16px;
-          line-height: 1.5;
-          max-width: 640px;
+        .pg-title-row {
+          display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
         }
+        .pg-info-btn {
+          width: 24px; height: 24px; min-width: 24px;
+          border-radius: 50%; background: var(--panel-2);
+          border: 1px solid var(--border); color: var(--text-dim);
+          font-size: 12px; font-weight: 700; line-height: 1; cursor: pointer;
+          display: inline-flex; align-items: center; justify-content: center;
+          flex-shrink: 0; margin-top: 4px;
+        }
+        .pg-info-btn:active { border-color: var(--accent); color: var(--accent); }
+        .pg-info-overlay {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000;
+          display: flex; align-items: center; justify-content: center; padding: 16px;
+        }
+        .pg-info-modal {
+          background: var(--panel); border-radius: 12px;
+          width: 100%; max-width: 520px;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+          max-height: 90vh; overflow-y: auto;
+        }
+        .pg-info-modal-header {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 16px 20px 12px; border-bottom: 1px solid var(--border);
+        }
+        .pg-info-modal-header strong { font-size: 15px; }
+        .pg-info-modal-close {
+          background: none; border: none; font-size: 22px; color: var(--text-faint);
+          cursor: pointer; line-height: 1; padding: 0 4px;
+        }
+        .pg-info-body { padding: 16px 20px 20px; }
+        .pg-info-body p { font-size: 13.5px; color: var(--text-dim); line-height: 1.55; margin: 0 0 14px; }
         .pg-note {
           background: var(--panel-2);
           border: 1px solid var(--border);
@@ -747,19 +774,35 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       `}</style>
 
       <div className="pg-container">
-        <h1 className="pg-title">Probability-of-Success Guardrails</h1>
-        <p className="pg-subtitle">
-          Runs a Monte Carlo simulation from your current portfolio and remaining horizon, then adjusts spending based on
-          how your probability of plan success has moved — rather than off your withdrawal rate.
-        </p>
-
-        <div className="pg-note">
-          <strong>How this differs from rate-based guardrails:</strong> withdrawal rate can't tell two retirees with the
-          same rate but different ages apart. Probability of success accounts for time remaining directly — research
-          (Kitces/Income Lab, 2021–2024) argues this is a more robust trigger. Tradeoff: results depend on your return and
-          volatility assumptions, and this normal-distribution Monte Carlo tends to read more optimistic than historical
-          backtesting because it understates sequence-of-returns risk.
+        <div className="pg-title-row">
+          <h1 className="pg-title">Probability-of-Success Guardrails</h1>
+          <button className="pg-info-btn" onClick={() => setInfoOpen(true)} aria-label="About this calculator">?</button>
         </div>
+
+        {infoOpen && (
+          <div className="pg-info-overlay" onClick={() => setInfoOpen(false)}>
+            <div className="pg-info-modal" onClick={e => e.stopPropagation()}>
+              <div className="pg-info-modal-header">
+                <strong>About this calculator</strong>
+                <button className="pg-info-modal-close" onClick={() => setInfoOpen(false)} aria-label="Close">×</button>
+              </div>
+              <div className="pg-info-body">
+                <p>
+                  Runs a Monte Carlo simulation from your current portfolio and remaining horizon, then adjusts spending
+                  based on how your probability of plan success has moved — rather than off your withdrawal rate.
+                </p>
+                <div className="pg-note" style={{ marginBottom: 0 }}>
+                  <strong>How this differs from rate-based guardrails:</strong> withdrawal rate can't tell two retirees
+                  with the same rate but different ages apart. Probability of success accounts for time remaining
+                  directly — research (Kitces/Income Lab, 2021–2024) argues this is a more robust trigger. Tradeoff:
+                  results depend on your return and volatility assumptions, and this normal-distribution Monte Carlo
+                  tends to read more optimistic than historical backtesting because it understates sequence-of-returns
+                  risk.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="pg-grid">
           <div>
@@ -960,7 +1003,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                   <span className="result-stat-value">{years}</span>
                 </div>
 
-                {result && result.bridge && (
+                {result && result.bridge && ssEnabled && num(ssClaimAge) > num(currentAge) && (
                   <div className="bridge-box">
                     <div className="bridge-title">Pre-SS bridge stress (age {num(currentAge)}–{result.bridge.claimAge})</div>
                     <div className="result-stat-row">
