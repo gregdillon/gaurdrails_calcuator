@@ -601,7 +601,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           --text: #1a1a1a;
           --text-dim: #555;
           --text-faint: #aaa;
-          --accent: #2563eb;
+          --accent: #0ea5e9;
           font-family: 'IBM Plex Sans', -apple-system, sans-serif;
           background: var(--bg);
           color: var(--text);
@@ -1129,8 +1129,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                     <AreaChart data={sensitivityData} margin={{ top: 5, right: 10, left: 4, bottom: 0 }}>
                       <defs>
                         <linearGradient id="successGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#2563eb" stopOpacity={0.25} />
-                          <stop offset="100%" stopColor="#2563eb" stopOpacity={0} />
+                          <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.25} />
+                          <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid stroke="#e8e8e8" strokeDasharray="3 3" vertical={false} />
@@ -1143,7 +1143,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                       />
                       <ReferenceLine y={num(targetSuccess)} stroke="#15803d" strokeDasharray="4 4" />
                       <ReferenceLine x={num(withdrawal)} stroke="#555" strokeDasharray="2 2" />
-                      <Area type="monotone" dataKey="success" stroke="#2563eb" fill="url(#successGrad)" strokeWidth={2} isAnimationActive={false} dot={false} />
+                      <Area type="monotone" dataKey="success" stroke="#0ea5e9" fill="url(#successGrad)" strokeWidth={2} isAnimationActive={false} dot={false} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
