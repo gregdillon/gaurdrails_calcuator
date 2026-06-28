@@ -278,6 +278,7 @@ type CalcResult = {
   success: number;
   zone: string;
   recommended: number;
+  floorBound: boolean;
   successAfter: number;
   bridge: BridgeResult | null;
   staticSuccess: number;
@@ -314,7 +315,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const [blockLen, setBlockLen] = useState<NumOrStr>(7);
   const [dynamicMode, setDynamicMode] = useState(true);
   const [spendFloor, setSpendFloor] = useState<NumOrStr>(60000);
-  const [bridgeGuardrail, setBridgeGuardrail] = useState(false);
+  const [bridgeGuardrail, setBridgeGuardrail] = useState(true);
   const [bridgeFloor, setBridgeFloor] = useState<NumOrStr>(85);
 
   const liveDataRef = useRef<Record<string, unknown>>({});
@@ -438,6 +439,17 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       else if (finalZone === "raise" || finalZone === "extRaise") recommended = w * (1 + pct / 100);
       else recommended = w * (1 + infl / 100);
 
+      // Floor check on the real, displayed recommendation. The simulation enforces the floor
+      // inside each path; the headline figure is computed independently and must respect it too.
+      let floorBound = false;
+      if (dynamicMode) {
+        const fl = num(spendFloor, 0);
+        if (fl > 0 && recommended < fl) {
+          recommended = fl;
+          floorBound = true;
+        }
+      }
+
       const successAfter = simulateSuccess({ portfolio: p, withdrawal: recommended, years, retMean: r, retVol: v, trials: tr, ...simBase, dynamic: dynamicMode, ...gkParams }).success;
 
       const points: SensPoint[] = [];
@@ -459,7 +471,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       const sustainable = withdrawalForTargetSuccess({ portfolio: p, years, retMean: r, retVol: v, trials: tr, targetSuccess: tgt, ssParams: simBase });
 
       setResult({
-        success, zone: finalZone, recommended, successAfter, bridge, bridgeOverrode,
+        success, zone: finalZone, recommended, floorBound, successAfter, bridge, bridgeOverrode,
         staticSuccess: staticRes.success,
         dynamicSuccess: dynRes.success,
         dynamicMedianSpend: dynRes.medianFinalSpend,
@@ -536,7 +548,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     setTrials(DEFAULTS.trials); setSymmetric(false);
     setSsEnabled(true); setSsClaimAge(70); setSsMonthly(4500); setSsCola(true);
     setEngine("historical"); setHaircut(2.0); setStockPct(60); setBlockLen(7);
-    setDynamicMode(true); setSpendFloor(60000); setBridgeGuardrail(false); setBridgeFloor(85);
+    setDynamicMode(true); setSpendFloor(60000); setBridgeGuardrail(true); setBridgeFloor(85);
     setTimeout(() => runCalcRef.current(), 80);
     setTimeout(() => setSaveStatus(null), 1200);
   };
@@ -732,6 +744,11 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           text-align: center; margin-top: 2px;
         }
         .result-sub { font-size: 12.5px; color: var(--text-dim); margin: 4px 0 0; }
+        .floor-warning {
+          margin: 12px auto 0; max-width: 360px; text-align: left;
+          background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px;
+          color: #92400e; font-size: 12px; line-height: 1.45; padding: 9px 11px;
+        }
         .result-stat-row {
           display: flex; justify-content: space-between; gap: 10px;
           padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 12.5px;
@@ -1004,7 +1021,18 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                       ${(result.recommended / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per month
                     </div>
                   )}
-                  <p className="result-sub">recommended withdrawal for this year</p>
+                  <p className="result-sub">
+                    {result?.floorBound
+                      ? "capped at your spending floor — the guardrail math wanted to go lower"
+                      : "recommended withdrawal for this year"}
+                  </p>
+                  {result?.floorBound && (
+                    <div className="floor-warning">
+                      This year's guardrail cut would have gone below your {fmtMoney(num(spendFloor, 0))} floor.
+                      The floor is now your binding constraint — if this persists, your essential spending
+                      itself may be at risk, not just discretionary spending.
+                    </div>
+                  )}
                 </div>
 
                 <div className="result-stat-row">
