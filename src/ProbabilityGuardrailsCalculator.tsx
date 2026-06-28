@@ -726,6 +726,11 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           font-size: 36px; font-weight: 600; line-height: 1.1; margin: 4px 0;
         }
         .result-amount.stale { opacity: 0.4; }
+        .result-amount-monthly {
+          font-family: var(--font-sans, system-ui, sans-serif);
+          font-size: 11px; font-weight: 400; color: var(--text-dim);
+          text-align: center; margin-top: 2px;
+        }
         .result-sub { font-size: 12.5px; color: var(--text-dim); margin: 4px 0 0; }
         .result-stat-row {
           display: flex; justify-content: space-between; gap: 10px;
@@ -994,6 +999,11 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                   <div className={`result-amount ${stale ? "stale" : ""}`}>
                     {result ? fmtMoney(result.recommended) : "—"}
                   </div>
+                  {result && result.recommended > 0 && (
+                    <div className="result-amount-monthly">
+                      ${(result.recommended / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per month
+                    </div>
+                  )}
                   <p className="result-sub">recommended withdrawal for this year</p>
                 </div>
 
