@@ -12,7 +12,10 @@
       "PowerShell(npx tsc -b 2>&1 | Select-Object -First 40; \"exit: $LASTEXITCODE\")",
       "PowerShell(npx tsc -b 2>&1 | Select-Object -First 20; \"exit: $LASTEXITCODE\")",
       "WebSearch",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(node bridge.mjs)",
+      "PowerShell(npx tsc -b 2>&1)",
+      "PowerShell(if \\($LASTEXITCODE -eq 0\\) { \"tsc: clean\" } else { \"tsc: errors\" })"
     ]
   }
 }

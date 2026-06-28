@@ -29,6 +29,9 @@ const DEFAULTS = {
   extWidth: 10,
   extAdjust: 20,
   trials: 1500,
+  // Reserve to reach SS claim age with: the post-SS spending shortfall
+  // (≈ $85k draw − $54k SS) discounted over the ~20 post-SS years at ~3% real ≈ $450k.
+  bridgeMinBalance: 450000,
 };
 
 const STORAGE_KEY = "pos-guardrails-settings";
@@ -54,8 +57,9 @@ const TIPS: Record<string, string> = {
   stockPct: "Your stock allocation. The historical engine blends real US stock and bond returns by this mix each year. Bonds are the remainder.",
   blockLen: "Length of the contiguous block sampled from history. Longer blocks preserve more of the real sequence (e.g. multi-year crashes and recoveries stay intact); 1 = independent single years.",
   spendFloor: "The lowest your spending can be cut to under dynamic guardrails. Cuts won't drive spending below this — it's your essential-expenses backstop.",
-  bridgeGuardrail: "When enabled, the probability that your portfolio survives the pre-SS bridge period alone is treated as a safety floor. If bridge survival falls below the threshold you set, the spending recommendation is made more conservative — even if the full-plan success rate is in the safe zone. This protects against the period most exposed to sequence-of-returns risk.",
-  bridgeFloor: "The minimum bridge survival rate you require. If the portfolio's probability of reaching SS claim age falls below this, a spending cut is recommended regardless of the full-plan success rate. 85% is a reasonable default — the bridge is a short, high-risk window with no SS income buffer.",
+  bridgeGuardrail: "When enabled, the chance your portfolio reaches SS claim age with at least your target reserve is treated as a safety floor. If that chance falls below the threshold you set, the spending recommendation is made more conservative — even if the full-plan success rate is in the safe zone. A badly missed floor escalates to a deeper cut. This protects against the period most exposed to sequence-of-returns risk.",
+  bridgeFloor: "The minimum confidence you require for clearing the bridge with your reserve intact. If the chance of reaching SS claim age with at least your minimum balance falls below this, a spending cut is recommended regardless of the full-plan success rate. 85% is a reasonable default, but a longer bridge (10+ years) is a much harder test at the same percentage, so consider what landing reserve actually matters.",
+  bridgeMinBalance: "The portfolio balance you want to still have when Social Security starts. Success on the bridge means reaching claim age with at least this much, not merely avoiding $0 — over a long bridge, arriving with a near-empty portfolio still leaves decades to fund. A sensible value is roughly the present value of your post-SS spending shortfall (what the portfolio still has to cover once SS is flowing). Set to 0 to score the bridge purely on not running out.",
 };
 
 function clamp(n: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, n)); }
@@ -269,9 +273,13 @@ function Field({ id, label, value, onChange, suffix, step = 1, min, max, hint, a
 type BridgeResult = {
   years: number;
   claimAge: number;
-  survive: number;
-  median: number;
-  p10: number;
+  minBalance: number;
+  survive: number;       // governing number: flexed when dynamic mode is on, rigid when off
+  surviveRigid: number;  // no-flex stress test
+  surviveFlex: number;   // with the same guardrail flexing the headline plan uses
+  median: number;        // rigid-stress median end balance
+  p10: number;           // rigid-stress 10th-percentile end balance
+  claimSensitivity: { claimAge: number; survive: number }[];
 };
 
 type CalcResult = {
@@ -317,6 +325,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const [spendFloor, setSpendFloor] = useState<NumOrStr>(60000);
   const [bridgeGuardrail, setBridgeGuardrail] = useState(true);
   const [bridgeFloor, setBridgeFloor] = useState<NumOrStr>(85);
+  const [bridgeMinBalance, setBridgeMinBalance] = useState<NumOrStr>(DEFAULTS.bridgeMinBalance);
 
   const liveDataRef = useRef<Record<string, unknown>>({});
   const runCalcRef = useRef<() => void>(() => {});
@@ -337,11 +346,21 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     (v === "" || v == null || isNaN(Number(v)) ? fallback : Number(v));
   const years = Math.max(0, num(endAge) - num(currentAge));
 
+  // Heuristic reserve suggestion for the bridge: present value of the post-SS spending
+  // shortfall the portfolio still has to cover after Social Security begins.
+  const suggestedBridgeReserve = (() => {
+    const postYrs = Math.max(0, num(endAge) - num(ssClaimAge));
+    if (postYrs <= 0) return 0;
+    const gap = Math.max(0, num(withdrawal) - (ssEnabled ? num(ssMonthly) * 12 : 0));
+    const realR = (num(ret) - num(inf)) / 100;
+    return realR > 0.0001 ? gap * (1 - Math.pow(1 + realR, -postYrs)) / realR : gap * postYrs;
+  })();
+
   useEffect(() => { setStale(true); }, [
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
     targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials,
     ssEnabled, ssClaimAge, ssMonthly, ssCola,
-    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor,
+    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeMinBalance,
   ]);
 
   const runCalc = () => {
@@ -389,18 +408,19 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       let bridge: BridgeResult | null = null;
       if (ssEnabled && num(ssClaimAge) > num(currentAge)) {
         const bridgeYears = num(ssClaimAge) - num(currentAge);
+        const minBal = num(bridgeMinBalance, 0);
         const ser = engineParams.series;
         const useHist = engineParams.engine === "historical" && ser && ser.length > 0;
         const nH = useHist ? ser!.length : 0;
         const hc = engineParams.haircut / 100;
         const bl = engineParams.blockLen;
-        let bridgeSurvive = 0;
-        const endBalances: number[] = [];
-        for (let t = 0; t < tr; t++) {
-          let bal = p;
-          let ok = true;
-          let bp = 0, bs = 0;
-          for (let y = 0; y < bridgeYears; y++) {
+
+        // One bridge path. When `flex` is true, the same guardrail flexing + floor the
+        // headline plan uses is applied; otherwise spending is rigid. Returns the end
+        // balance, 0 if the portfolio depleted before reaching claim age.
+        const runBridge = (draw: number, byears: number, flex: boolean) => {
+          let bal = p, bp = 0, bs = 0, spend = draw;
+          for (let y = 0; y < byears; y++) {
             let rr: number;
             if (useHist) {
               if (bp === 0) { bs = Math.floor(Math.random() * nH); bp = bl; }
@@ -409,26 +429,73 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
             } else {
               rr = randNormal((r - infl) / 100, v / 100);
             }
-            bal = bal * (1 + rr) - w;
-            if (bal <= 0) { ok = false; bal = 0; break; }
+            if (flex && bal > 0) {
+              const cr = (spend / bal) * 100;
+              if (cr >= gkParams.gkUpper + gkParams.gkExtWidth) spend = spend * (1 - eadj / 100);
+              else if (cr >= gkParams.gkUpper) spend = spend * (1 - adj / 100);
+              else if (cr <= gkParams.gkLower - gkParams.gkExtWidth) spend = spend * (1 + eadj / 100);
+              else if (cr <= gkParams.gkLower) spend = spend * (1 + adj / 100);
+              if (spend < gkParams.spendFloor) spend = gkParams.spendFloor;
+            }
+            bal = bal * (1 + rr) - spend;
+            if (bal <= 0) { bal = 0; break; }
           }
-          if (ok) bridgeSurvive++;
-          endBalances.push(bal);
+          return bal;
+        };
+
+        // Survival = reaching claim age with at least the reserve. minBal === 0 reduces to
+        // "didn't deplete." Rigid is the no-flex stress; the flexed run mirrors the strategy
+        // the headline assumes, and is what drives the override when dynamic mode is on.
+        let surviveRigid = 0, surviveFlex = 0;
+        const endBalances: number[] = [];
+        for (let t = 0; t < tr; t++) {
+          const endR = runBridge(w, bridgeYears, false);
+          if (endR > 0 && endR >= minBal) surviveRigid++;
+          endBalances.push(endR);
+          const endF = runBridge(w, bridgeYears, dynamicMode);
+          if (endF > 0 && endF >= minBal) surviveFlex++;
         }
         endBalances.sort((a, b) => a - b);
         const median = endBalances[Math.floor(endBalances.length / 2)];
         const p10 = endBalances[Math.floor(endBalances.length * 0.10)];
-        bridge = { years: bridgeYears, claimAge: num(ssClaimAge), survive: (bridgeSurvive / tr) * 100, median, p10 };
+
+        // For a long bridge, the dominant lever is when you claim SS. Show how the reserve
+        // odds move across plausible claim ages, under the same spending policy as the headline
+        // (flexed when dynamic is on) so the current-age row corroborates the headline number.
+        const claimSensitivity: { claimAge: number; survive: number }[] = [];
+        if (bridgeYears >= 10) {
+          const sTrials = Math.min(tr, 1000);
+          for (const ca of [62, 65, 67, 70]) {
+            if (ca <= num(currentAge)) continue;
+            let surv = 0;
+            for (let t = 0; t < sTrials; t++) {
+              const end = runBridge(w, ca - num(currentAge), dynamicMode);
+              if (end > 0 && end >= minBal) surv++;
+            }
+            claimSensitivity.push({ claimAge: ca, survive: (surv / sTrials) * 100 });
+          }
+        }
+
+        const surviveGov = dynamicMode ? surviveFlex : surviveRigid;
+        bridge = {
+          years: bridgeYears, claimAge: num(ssClaimAge), minBalance: minBal,
+          survive: (surviveGov / tr) * 100,
+          surviveRigid: (surviveRigid / tr) * 100,
+          surviveFlex: (surviveFlex / tr) * 100,
+          median, p10, claimSensitivity,
+        };
       }
 
-      // Bridge guardrail: a one-sided safety floor — if bridge survival is below the user's
-      // threshold, the main zone is capped at "cut". Bridge survival being high is not a
-      // signal to raise spending, just confirmation the bridge is safe.
+      // Bridge guardrail: a one-sided safety floor — if the bridge reserve odds are below the
+      // user's threshold, the main zone is capped at "cut" (or "extCut" when the miss is large,
+      // mirroring the main band's extended zone). High bridge odds are never a signal to raise
+      // spending, just confirmation the bridge is safe.
       let finalZone = zone;
       let bridgeOverrode = false;
       if (bridgeGuardrail && bridge && bridge.survive < num(bridgeFloor, 85)) {
         const scoreOf = (z: string) => z === "extCut" ? -2 : z === "cut" ? -1 : z === "hold" ? 0 : z === "raise" ? 1 : 2;
-        if (scoreOf(zone) > scoreOf("cut")) { finalZone = "cut"; bridgeOverrode = true; }
+        const target = bridge.survive < num(bridgeFloor, 85) - ew ? "extCut" : "cut";
+        if (scoreOf(zone) > scoreOf(target)) { finalZone = target; bridgeOverrode = true; }
       }
 
       const isExtended = finalZone === "extCut" || finalZone === "extRaise";
@@ -508,6 +575,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         set("spendFloor", setSpendFloor);
         setB("bridgeGuardrail", setBridgeGuardrail);
         set("bridgeFloor", setBridgeFloor);
+        set("bridgeMinBalance", setBridgeMinBalance);
         if (d.savedAt) setSavedAt(d.savedAt);
       }
     } catch { /* no saved state */ }
@@ -523,7 +591,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
       targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
       ssEnabled, ssClaimAge, ssMonthly, ssCola,
-      engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor,
+      engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeMinBalance,
       savedAt: ts,
     });
     try {
@@ -549,6 +617,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     setSsEnabled(true); setSsClaimAge(70); setSsMonthly(4500); setSsCola(true);
     setEngine("historical"); setHaircut(2.0); setStockPct(60); setBlockLen(7);
     setDynamicMode(true); setSpendFloor(60000); setBridgeGuardrail(true); setBridgeFloor(85);
+    setBridgeMinBalance(DEFAULTS.bridgeMinBalance);
     setTimeout(() => runCalcRef.current(), 80);
     setTimeout(() => setSaveStatus(null), 1200);
   };
@@ -581,7 +650,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
     targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
     ssEnabled, ssClaimAge, ssMonthly, ssCola,
-    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor,
+    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeMinBalance,
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { onRegisterDataGetter?.(() => liveDataRef.current); }, []);
@@ -943,7 +1012,14 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                       </div>
                       {activeTip === "bridgeGuardrail" && <p className="tip-text">{TIPS.bridgeGuardrail}</p>}
                       {bridgeGuardrail && (
-                        <Field id="bridgeFloor" label="Bridge survival floor" value={bridgeFloor} onChange={setBridgeFloor} suffix="%" step={1} min={50} max={99} hint={`Cut spending if bridge survival falls below ${num(bridgeFloor, 85)}%.`} {...tipProps} />
+                        <>
+                          <Field id="bridgeMinBalance" label="Min. balance at claim age" value={bridgeMinBalance} onChange={setBridgeMinBalance} suffix="$" step={10000} min={0}
+                            hint={suggestedBridgeReserve > 0
+                              ? `Suggested ≈ ${fmtShort(suggestedBridgeReserve)} — covers your ${fmtShort(Math.max(0, num(withdrawal) - (ssEnabled ? num(ssMonthly) * 12 : 0)))}/yr post-SS gap to age ${num(endAge)}. Set to 0 to score on not running out.`
+                              : "Reach claim age with at least this much. Set to 0 to score on not running out."}
+                            {...tipProps} />
+                          <Field id="bridgeFloor" label="Required confidence" value={bridgeFloor} onChange={setBridgeFloor} suffix="%" step={1} min={50} max={99} hint={`Cut spending if the chance of reaching age ${num(ssClaimAge)} with ≥ ${fmtShort(num(bridgeMinBalance, 0))} falls below ${num(bridgeFloor, 85)}%.`} {...tipProps} />
+                        </>
                       )}
                     </>
                   )}
@@ -1086,13 +1162,23 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                   <div className="bridge-box">
                     <div className="bridge-title">Pre-SS bridge stress (age {num(currentAge)}–{result.bridge.claimAge})</div>
                     <div className="result-stat-row">
-                      <span className="result-stat-label">Portfolio survives bridge alone</span>
-                      <span className="result-stat-value" style={{ color: result.bridge.survive >= 90 ? "#15803d" : result.bridge.survive >= 75 ? "#d97706" : "#b91c1c" }}>
+                      <span className="result-stat-label">
+                        {result.bridge.minBalance > 0
+                          ? `Chance of ≥ ${fmtShort(result.bridge.minBalance)} at ${result.bridge.claimAge}${dynamicMode ? " (with guardrails)" : ""}`
+                          : `Portfolio survives bridge alone${dynamicMode ? " (with guardrails)" : ""}`}
+                      </span>
+                      <span className="result-stat-value" style={{ color: result.bridge.survive >= num(bridgeFloor, 85) ? "#15803d" : result.bridge.survive >= num(bridgeFloor, 85) - num(extWidth) ? "#d97706" : "#b91c1c" }}>
                         {fmtPct(result.bridge.survive)}
                       </span>
                     </div>
+                    {dynamicMode && (
+                      <div className="result-stat-row ref-line">
+                        <span className="result-stat-label">Rigid stress — no spending cuts</span>
+                        <span className="result-stat-value">{fmtPct(result.bridge.surviveRigid)}</span>
+                      </div>
+                    )}
                     <div className="result-stat-row">
-                      <span className="result-stat-label">Median balance at {result.bridge.claimAge}</span>
+                      <span className="result-stat-label">Median balance at {result.bridge.claimAge} (rigid)</span>
                       <span className="result-stat-value">{fmtMoney(result.bridge.median)}</span>
                     </div>
                     <div className="result-stat-row">
@@ -1101,11 +1187,27 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                     </div>
                     {result.bridgeOverrode && (
                       <p className="bridge-note" style={{ color: "#d97706", fontWeight: 600, marginTop: 8 }}>
-                        ⚠ Bridge survival is below the lower guardrail — this overrode the main spending recommendation.
+                        ⚠ Bridge reserve odds are below your {num(bridgeFloor, 85)}% floor — this overrode the main spending recommendation{result.zone === "extCut" ? " with a deeper cut" : ""}.
                       </p>
                     )}
+                    {result.bridge.claimSensitivity.length > 0 && (
+                      <div style={{ marginTop: 12 }}>
+                        <div className="bridge-title" style={{ color: "var(--text-dim)" }}>If you claimed SS at…</div>
+                        {result.bridge.claimSensitivity.map(cs => (
+                          <div className="result-stat-row ref-line" key={cs.claimAge}>
+                            <span className="result-stat-label">
+                              Age {cs.claimAge} · {cs.claimAge - num(currentAge)}-yr bridge{cs.claimAge === result.bridge!.claimAge ? " (current)" : ""}
+                            </span>
+                            <span className="result-stat-value">{fmtPct(cs.survive)}</span>
+                          </div>
+                        ))}
+                        <p className="bridge-note">
+                          Claiming earlier shortens the bridge and lifts these odds, but permanently lowers your monthly benefit and stretches the years funded partly from the portfolio. A planning signal, not a recommendation.
+                        </p>
+                      </div>
+                    )}
                     <p className="bridge-note">
-                      Full {fmtMoney(num(withdrawal))} draw from the portfolio alone, before SS starts. This is the window most exposed to a bad early sequence.
+                      Full {fmtMoney(num(withdrawal))} draw from the portfolio alone, before SS starts — the window most exposed to a bad early sequence.{dynamicMode ? " Top line assumes you flex spending per your guardrails; the rigid line assumes you don't." : ""}
                     </p>
                   </div>
                 )}
