@@ -580,7 +580,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       }
     } catch { /* no saved state */ }
     setTimeout(() => runCalcRef.current(), 80);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSave = () => {
