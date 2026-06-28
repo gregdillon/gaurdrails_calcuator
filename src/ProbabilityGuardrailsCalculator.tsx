@@ -260,10 +260,11 @@ function Field({ id, label, value, onChange, suffix, step = 1, min, max, hint, d
       </div>
       {activeTip === id && <p className="tip-text">{TIPS[id]}</p>}
       <div className="field-input-wrap">
+        {suffix === "$" && <span className="field-prefix">$</span>}
         <input
           type="number"
           inputMode="decimal"
-          className={`field-input${highlight ? " highlight" : ""}`}
+          className={`field-input${highlight ? " highlight" : ""}${suffix === "$" ? " has-prefix" : ""}`}
           value={value}
           step={step}
           min={min}
@@ -271,7 +272,7 @@ function Field({ id, label, value, onChange, suffix, step = 1, min, max, hint, d
           disabled={disabled}
           onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
         />
-        {suffix && <span className="field-suffix">{suffix}</span>}
+        {suffix && suffix !== "$" && <span className="field-suffix">{suffix}</span>}
       </div>
       {hint && <p className="field-hint">{hint}</p>}
     </div>
@@ -818,6 +819,11 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           position: absolute; right: 12px; color: var(--text-faint);
           font-size: 13px; pointer-events: none;
         }
+        .field-prefix {
+          position: absolute; left: 12px; color: var(--text-faint);
+          font-size: 13px; pointer-events: none;
+        }
+        .field-input.has-prefix { padding-left: 24px; }
         .field-hint { font-size: 11.5px; color: var(--text-faint); margin: 5px 0 0; }
         .hint-link {
           background: none; border: none; padding: 0; font: inherit;
