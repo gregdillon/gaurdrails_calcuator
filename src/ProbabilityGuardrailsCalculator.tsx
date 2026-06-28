@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
@@ -34,6 +34,11 @@ const DEFAULTS = {
   bridgeMinBalance: 450000,
 };
 
+// The bridge confidence floor defaults to this many points below the target success rate,
+// keeping it a subordinate early-warning floor rather than a second full-strength constraint
+// that would double-count the post-SS risk already captured in the headline success number.
+const BRIDGE_CONFIDENCE_OFFSET = 15;
+
 const STORAGE_KEY = "pos-guardrails-settings";
 
 const TIPS: Record<string, string> = {
@@ -58,7 +63,7 @@ const TIPS: Record<string, string> = {
   blockLen: "Length of the contiguous block sampled from history. Longer blocks preserve more of the real sequence (e.g. multi-year crashes and recoveries stay intact); 1 = independent single years.",
   spendFloor: "The lowest your spending can be cut to under dynamic guardrails. Cuts won't drive spending below this — it's your essential-expenses backstop.",
   bridgeGuardrail: "When enabled, the chance your portfolio reaches SS claim age with at least your target reserve is treated as a safety floor. If that chance falls below the threshold you set, the spending recommendation is made more conservative — even if the full-plan success rate is in the safe zone. A badly missed floor escalates to a deeper cut. This protects against the period most exposed to sequence-of-returns risk.",
-  bridgeFloor: "The minimum confidence you require for clearing the bridge with your reserve intact. If the chance of reaching SS claim age with at least your minimum balance falls below this, a spending cut is recommended regardless of the full-plan success rate. 85% is a reasonable default, but a longer bridge (10+ years) is a much harder test at the same percentage, so consider what landing reserve actually matters.",
+  bridgeFloor: "The minimum confidence you require of reaching SS claim age with at least your minimum balance. Below it, spending is cut regardless of the full-plan success rate. Read it as a downside test: 85% means your reserve must survive all but the worst 15% of outcomes (your ~15th-percentile balance); 75% means all but the worst 25%. It defaults to your target success rate minus 15 points — that keeps the bridge a supplementary early-warning floor rather than a second full-strength constraint that would double-count the post-SS risk already in the headline number. By default it auto-tracks your target; switch on 'Set required confidence manually' to enter a custom value that won't move when the target changes. Turning the override back off restores the tracked default.",
   bridgeMinBalance: "The portfolio balance you want to still have when Social Security starts. Success on the bridge means reaching claim age with at least this much, not merely avoiding $0 — over a long bridge, arriving with a near-empty portfolio still leaves decades to fund. A sensible value is roughly the present value of your post-SS spending shortfall (what the portfolio still has to cover once SS is flowing). Set to 0 to score the bridge purely on not running out.",
 };
 
@@ -234,12 +239,14 @@ type FieldProps = {
   step?: number;
   min?: number;
   max?: number;
-  hint?: string;
+  hint?: ReactNode;
+  disabled?: boolean;
+  highlight?: boolean;
   activeTip: string | null;
   setActiveTip: (id: string | null) => void;
 };
 
-function Field({ id, label, value, onChange, suffix, step = 1, min, max, hint, activeTip, setActiveTip }: FieldProps) {
+function Field({ id, label, value, onChange, suffix, step = 1, min, max, hint, disabled, highlight, activeTip, setActiveTip }: FieldProps) {
   return (
     <div className="field">
       <div className="field-label-row">
@@ -256,11 +263,12 @@ function Field({ id, label, value, onChange, suffix, step = 1, min, max, hint, a
         <input
           type="number"
           inputMode="decimal"
-          className="field-input"
+          className={`field-input${highlight ? " highlight" : ""}`}
           value={value}
           step={step}
           min={min}
           max={max}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
         />
         {suffix && <span className="field-suffix">{suffix}</span>}
@@ -324,7 +332,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const [dynamicMode, setDynamicMode] = useState(true);
   const [spendFloor, setSpendFloor] = useState<NumOrStr>(60000);
   const [bridgeGuardrail, setBridgeGuardrail] = useState(true);
-  const [bridgeFloor, setBridgeFloor] = useState<NumOrStr>(85);
+  const [bridgeFloor, setBridgeFloor] = useState<NumOrStr>(DEFAULTS.targetSuccess - BRIDGE_CONFIDENCE_OFFSET);
+  const [bridgeFloorManual, setBridgeFloorManual] = useState(false);
   const [bridgeMinBalance, setBridgeMinBalance] = useState<NumOrStr>(DEFAULTS.bridgeMinBalance);
 
   const liveDataRef = useRef<Record<string, unknown>>({});
@@ -355,6 +364,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     const realR = (num(ret) - num(inf)) / 100;
     return realR > 0.0001 ? gap * (1 - Math.pow(1 + realR, -postYrs)) / realR : gap * postYrs;
   })();
+  // The clickable suggestion and the "doesn't match" highlight share this rounded value.
+  const suggestedReserveRounded = Math.round(suggestedBridgeReserve / 1000) * 1000;
 
   useEffect(() => { setStale(true); }, [
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
@@ -492,9 +503,9 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       // spending, just confirmation the bridge is safe.
       let finalZone = zone;
       let bridgeOverrode = false;
-      if (bridgeGuardrail && bridge && bridge.survive < num(bridgeFloor, 85)) {
+      if (bridgeGuardrail && bridge && bridge.survive < num(bridgeFloor, 75)) {
         const scoreOf = (z: string) => z === "extCut" ? -2 : z === "cut" ? -1 : z === "hold" ? 0 : z === "raise" ? 1 : 2;
-        const target = bridge.survive < num(bridgeFloor, 85) - ew ? "extCut" : "cut";
+        const target = bridge.survive < num(bridgeFloor, 75) - ew ? "extCut" : "cut";
         if (scoreOf(zone) > scoreOf(target)) { finalZone = target; bridgeOverrode = true; }
       }
 
@@ -575,6 +586,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         set("spendFloor", setSpendFloor);
         setB("bridgeGuardrail", setBridgeGuardrail);
         set("bridgeFloor", setBridgeFloor);
+        setB("bridgeFloorManual", setBridgeFloorManual);
         set("bridgeMinBalance", setBridgeMinBalance);
         if (d.savedAt) setSavedAt(d.savedAt);
       }
@@ -590,7 +602,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
       targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
       ssEnabled, ssClaimAge, ssMonthly, ssCola,
-      engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeMinBalance,
+      engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeFloorManual, bridgeMinBalance,
       savedAt: ts,
     });
     try {
@@ -615,7 +627,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     setTrials(DEFAULTS.trials); setSymmetric(false);
     setSsEnabled(true); setSsClaimAge(70); setSsMonthly(4500); setSsCola(true);
     setEngine("historical"); setHaircut(2.0); setStockPct(60); setBlockLen(7);
-    setDynamicMode(true); setSpendFloor(60000); setBridgeGuardrail(true); setBridgeFloor(85);
+    setDynamicMode(true); setSpendFloor(60000); setBridgeGuardrail(true);
+    setBridgeFloor(DEFAULTS.targetSuccess - BRIDGE_CONFIDENCE_OFFSET); setBridgeFloorManual(false);
     setBridgeMinBalance(DEFAULTS.bridgeMinBalance);
     setTimeout(() => runCalcRef.current(), 80);
     setTimeout(() => setSaveStatus(null), 1200);
@@ -638,10 +651,19 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const onTargetChange = (val: NumOrStr) => {
     const lowerDist = num(targetSuccess) - num(lowerBand);
     setTargetSuccess(val);
+    // The bridge confidence floor tracks target − offset unless the user has switched on
+    // manual override; in manual mode it only changes when they edit it directly.
+    if (!bridgeFloorManual && val !== "") setBridgeFloor(clamp(num(val) - BRIDGE_CONFIDENCE_OFFSET, 50, 99));
     if (symmetric && val !== "") {
       setLowerBand(clamp(num(val) - lowerDist, 0, num(val) - 1));
       setUpperBand(clamp(num(val) + lowerDist, num(val) + 1, 100));
     }
+  };
+  const onBridgeFloorManualToggle = () => {
+    const next = !bridgeFloorManual;
+    setBridgeFloorManual(next);
+    // Returning to auto mode re-snaps the floor to the tracked default (target − offset).
+    if (!next) setBridgeFloor(clamp(num(targetSuccess) - BRIDGE_CONFIDENCE_OFFSET, 50, 99));
   };
 
   // Keep ref current so App can read live state for export
@@ -649,7 +671,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
     targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
     ssEnabled, ssClaimAge, ssMonthly, ssCola,
-    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeMinBalance,
+    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeFloorManual, bridgeMinBalance,
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { onRegisterDataGetter?.(() => liveDataRef.current); }, []);
@@ -790,11 +812,18 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           font-family: inherit; min-height: 46px;
         }
         .field-input:focus { outline: none; border-color: var(--accent); }
+        .field-input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--panel); }
+        .field-input.highlight { border-color: #d97706; box-shadow: 0 0 0 2px rgba(217,119,6,0.25); }
         .field-suffix {
           position: absolute; right: 12px; color: var(--text-faint);
           font-size: 13px; pointer-events: none;
         }
         .field-hint { font-size: 11.5px; color: var(--text-faint); margin: 5px 0 0; }
+        .hint-link {
+          background: none; border: none; padding: 0; font: inherit;
+          color: var(--accent); cursor: pointer; text-decoration: underline;
+        }
+        .hint-link:active { color: var(--text); }
         .pg-result-sticky { position: sticky; top: 14px; }
         .result-zone { border-radius: 10px; padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); }
         .result-zone-label {
@@ -1013,11 +1042,32 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                       {bridgeGuardrail && (
                         <>
                           <Field id="bridgeMinBalance" label="Min. balance at claim age" value={bridgeMinBalance} onChange={setBridgeMinBalance} suffix="$" step={10000} min={0}
+                            highlight={suggestedBridgeReserve > 0 && num(bridgeMinBalance) !== suggestedReserveRounded}
                             hint={suggestedBridgeReserve > 0
-                              ? `Suggested ≈ ${fmtShort(suggestedBridgeReserve)} — covers your ${fmtShort(Math.max(0, num(withdrawal) - (ssEnabled ? num(ssMonthly) * 12 : 0)))}/yr post-SS gap to age ${num(endAge)}. Set to 0 to score on not running out.`
+                              ? (<>
+                                  {"Suggested ≈ "}
+                                  <button type="button" className="hint-link" onClick={() => setBridgeMinBalance(suggestedReserveRounded)}>
+                                    {fmtShort(suggestedBridgeReserve)}
+                                  </button>
+                                  {` — covers your ${fmtShort(Math.max(0, num(withdrawal) - (ssEnabled ? num(ssMonthly) * 12 : 0)))}/yr post-SS gap to age ${num(endAge)}. Set to 0 to score on not running out.`}
+                                </>)
                               : "Reach claim age with at least this much. Set to 0 to score on not running out."}
                             {...tipProps} />
-                          <Field id="bridgeFloor" label="Required confidence" value={bridgeFloor} onChange={setBridgeFloor} suffix="%" step={1} min={50} max={99} hint={`Cut spending if the chance of reaching age ${num(ssClaimAge)} with ≥ ${fmtShort(num(bridgeMinBalance, 0))} falls below ${num(bridgeFloor, 85)}%.`} {...tipProps} />
+                          <div className="toggle-row">
+                            <span className="toggle-label">Set required confidence manually</span>
+                            <button
+                              className={`toggle-switch ${bridgeFloorManual ? "on" : ""}`}
+                              onClick={onBridgeFloorManualToggle}
+                              aria-label="Toggle manual confidence override"
+                            >
+                              <span className="toggle-knob" />
+                            </button>
+                          </div>
+                          <Field id="bridgeFloor" label="Required confidence" value={bridgeFloor} onChange={setBridgeFloor} suffix="%" step={1} min={50} max={99} disabled={!bridgeFloorManual}
+                            hint={bridgeFloorManual
+                              ? `Cut if the chance of reaching age ${num(ssClaimAge)} with ≥ ${fmtShort(num(bridgeMinBalance, 0))} falls below ${num(bridgeFloor, 75)}% — your reserve must clear in all but the worst ${100 - num(bridgeFloor, 75)}% of outcomes.`
+                              : `Auto-tracking your ${num(targetSuccess)}% target − ${BRIDGE_CONFIDENCE_OFFSET} = ${num(bridgeFloor, 75)}%. Turn on manual override to set a custom value.`}
+                            {...tipProps} />
                         </>
                       )}
                     </>
@@ -1166,7 +1216,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                           ? `Chance of ≥ ${fmtShort(result.bridge.minBalance)} at ${result.bridge.claimAge}${dynamicMode ? " (with guardrails)" : ""}`
                           : `Portfolio survives bridge alone${dynamicMode ? " (with guardrails)" : ""}`}
                       </span>
-                      <span className="result-stat-value" style={{ color: result.bridge.survive >= num(bridgeFloor, 85) ? "#15803d" : result.bridge.survive >= num(bridgeFloor, 85) - num(extWidth) ? "#d97706" : "#b91c1c" }}>
+                      <span className="result-stat-value" style={{ color: result.bridge.survive >= num(bridgeFloor, 75) ? "#15803d" : result.bridge.survive >= num(bridgeFloor, 75) - num(extWidth) ? "#d97706" : "#b91c1c" }}>
                         {fmtPct(result.bridge.survive)}
                       </span>
                     </div>
@@ -1186,7 +1236,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                     </div>
                     {result.bridgeOverrode && (
                       <p className="bridge-note" style={{ color: "#d97706", fontWeight: 600, marginTop: 8 }}>
-                        ⚠ Bridge reserve odds are below your {num(bridgeFloor, 85)}% floor — this overrode the main spending recommendation{result.zone === "extCut" ? " with a deeper cut" : ""}.
+                        ⚠ Bridge reserve odds are below your {num(bridgeFloor, 75)}% floor — this overrode the main spending recommendation{result.zone === "extCut" ? " with a deeper cut" : ""}.
                       </p>
                     )}
                     {result.bridge.claimSensitivity.length > 0 && (

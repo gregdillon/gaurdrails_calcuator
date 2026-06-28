@@ -15,7 +15,9 @@
       "Bash(node -e ' *)",
       "Bash(node bridge.mjs)",
       "PowerShell(npx tsc -b 2>&1)",
-      "PowerShell(if \\($LASTEXITCODE -eq 0\\) { \"tsc: clean\" } else { \"tsc: errors\" })"
+      "PowerShell(if \\($LASTEXITCODE -eq 0\\) { \"tsc: clean\" } else { \"tsc: errors\" })",
+      "PowerShell(npx eslint src/ProbabilityGuardrailsCalculator.tsx 2>&1)",
+      "PowerShell(if \\($LASTEXITCODE -eq 0\\) { \"eslint: clean\" })"
     ]
   }
 }
