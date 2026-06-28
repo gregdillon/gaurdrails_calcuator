@@ -18,7 +18,8 @@
       "PowerShell(if \\($LASTEXITCODE -eq 0\\) { \"tsc: clean\" } else { \"tsc: errors\" })",
       "PowerShell(npx eslint src/ProbabilityGuardrailsCalculator.tsx 2>&1)",
       "PowerShell(if \\($LASTEXITCODE -eq 0\\) { \"eslint: clean\" })",
-      "mcp__visualize__read_me"
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget"
     ]
   }
 }

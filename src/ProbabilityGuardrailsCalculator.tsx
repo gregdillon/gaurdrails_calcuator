@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine,
+  ResponsiveContainer, ReferenceLine, ReferenceDot,
 } from "recharts";
 
 type NumOrStr = number | string;
@@ -53,7 +53,7 @@ const TIPS: Record<string, string> = {
   lowerBand: "If simulated success probability falls below this, your plan is taking on too much risk — spending is cut.",
   upperBand: "If simulated success probability rises above this, you have more room than needed — spending can increase.",
   adjust: "Standard spending adjustment when a guardrail is crossed.",
-  extWidth: "How many additional percentage points beyond a guardrail trigger the larger, extended adjustment.",
+  extWidth: "How many additional percentage points beyond the guardrail trigger the larger deep cut or raise. E.g. if the lower band is 70% and this is 10, a deep cut applies when success falls below 60%.",
   extAdjust: "The larger adjustment applied when success probability is far outside the target band — a bigger miss warrants a stronger correction.",
   trials: "Number of simulated market paths. More trials = smoother, more reliable estimate, but slower to compute.",
   ssClaimAge: "The age you start claiming Social Security. Delaying to 70 maximizes the monthly benefit.",
@@ -65,6 +65,7 @@ const TIPS: Record<string, string> = {
   bridgeGuardrail: "When enabled, the chance your portfolio reaches SS claim age with at least your target reserve is treated as a safety floor. If that chance falls below the threshold you set, the spending recommendation is made more conservative — even if the full-plan success rate is in the safe zone. A badly missed floor escalates to a deeper cut. This protects against the period most exposed to sequence-of-returns risk.",
   bridgeFloor: "The minimum confidence you require of reaching SS claim age with at least your minimum balance. Below it, spending is cut regardless of the full-plan success rate. Read it as a downside test: 85% means your reserve must survive all but the worst 15% of outcomes (your ~15th-percentile balance); 75% means all but the worst 25%. It defaults to your target success rate minus 15 points — that keeps the bridge a supplementary early-warning floor rather than a second full-strength constraint that would double-count the post-SS risk already in the headline number. By default it auto-tracks your target; switch on 'Set required confidence manually' to enter a custom value that won't move when the target changes. Turning the override back off restores the tracked default.",
   bridgeMinBalance: "The portfolio balance you want to still have when Social Security starts. Success on the bridge means reaching claim age with at least this much, not merely avoiding $0 — over a long bridge, arriving with a near-empty portfolio still leaves decades to fund. A sensible value is roughly the present value of your post-SS spending shortfall (what the portfolio still has to cover once SS is flowing). Set to 0 to score the bridge purely on not running out.",
+  successPair: "Now: the simulated probability that your portfolio lasts through your planning horizon at your current withdrawal level. After adjustment: what that probability becomes if you follow the guardrail recommendation this year. A healthy plan sits between your lower and upper guardrail bands — the adjustment is designed to bring you back toward your target.",
 };
 
 function clamp(n: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, n)); }
@@ -222,11 +223,19 @@ const ZONE_LABEL: Record<string, string> = {
   extRaise: "Significant raise available",
 };
 
+const ZONE_SUBLABEL: Record<string, string> = {
+  extCut: "A significant reduction is needed to protect your plan",
+  cut: "Trim spending now to stay on track",
+  hold: "No change needed — your plan is on course",
+  raise: "Your plan has room — consider spending more",
+  extRaise: "Excellent shape — a meaningful increase is available",
+};
+
 const ZONE_COLOR: Record<string, string> = {
   extCut: "#b91c1c",
   cut: "#d97706",
   hold: "#15803d",
-  raise: "#1d6fbf",
+  raise: "#0d9488",
   extRaise: "#7c3aed",
 };
 
@@ -283,11 +292,11 @@ type BridgeResult = {
   years: number;
   claimAge: number;
   minBalance: number;
-  survive: number;       // governing number: flexed when dynamic mode is on, rigid when off
-  surviveRigid: number;  // no-flex stress test
-  surviveFlex: number;   // with the same guardrail flexing the headline plan uses
-  median: number;        // rigid-stress median end balance
-  p10: number;           // rigid-stress 10th-percentile end balance
+  survive: number;
+  surviveRigid: number;
+  surviveFlex: number;
+  median: number;
+  p10: number;
   claimSensitivity: { claimAge: number; survive: number }[];
 };
 
@@ -337,6 +346,9 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const [bridgeFloorManual, setBridgeFloorManual] = useState(false);
   const [bridgeMinBalance, setBridgeMinBalance] = useState<NumOrStr>(DEFAULTS.bridgeMinBalance);
 
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+
   const liveDataRef = useRef<Record<string, unknown>>({});
   const runCalcRef = useRef<() => void>(() => {});
 
@@ -356,6 +368,15 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     (v === "" || v == null || isNaN(Number(v)) ? fallback : Number(v));
   const years = Math.max(0, num(endAge) - num(currentAge));
 
+  const withdrawalRate = num(portfolio) > 0 ? (num(withdrawal) / num(portfolio)) * 100 : 0;
+
+  const validationErrors: string[] = [];
+  if (num(currentAge) >= num(endAge)) validationErrors.push("Plan end age must exceed current age.");
+  if (num(lowerBand) >= num(targetSuccess)) validationErrors.push("Lower guardrail must be below the target success rate.");
+  if (num(upperBand) <= num(targetSuccess)) validationErrors.push("Upper guardrail must be above the target success rate.");
+  if (dynamicMode && num(spendFloor) > 0 && num(spendFloor) > num(withdrawal))
+    validationErrors.push("Spending floor exceeds current withdrawal — cuts would never trigger.");
+
   // Heuristic reserve suggestion for the bridge: present value of the post-SS spending
   // shortfall the portfolio still has to cover after Social Security begins.
   const suggestedBridgeReserve = (() => {
@@ -365,7 +386,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     const realR = (num(ret) - num(inf)) / 100;
     return realR > 0.0001 ? gap * (1 - Math.pow(1 + realR, -postYrs)) / realR : gap * postYrs;
   })();
-  // The clickable suggestion and the "doesn't match" highlight share this rounded value.
   const suggestedReserveRounded = Math.round(suggestedBridgeReserve / 1000) * 1000;
 
   useEffect(() => { setStale(true); }, [
@@ -416,7 +436,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       const success = dynamicMode ? dynRes.success : staticRes.success;
       const zone = getZone(success, lb, ub, ew);
 
-      // Compute bridge first so it can inform the spending recommendation when bridgeGuardrail is on
       let bridge: BridgeResult | null = null;
       if (ssEnabled && num(ssClaimAge) > num(currentAge)) {
         const bridgeYears = num(ssClaimAge) - num(currentAge);
@@ -427,9 +446,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         const hc = engineParams.haircut / 100;
         const bl = engineParams.blockLen;
 
-        // One bridge path. When `flex` is true, the same guardrail flexing + floor the
-        // headline plan uses is applied; otherwise spending is rigid. Returns the end
-        // balance, 0 if the portfolio depleted before reaching claim age.
         const runBridge = (draw: number, byears: number, flex: boolean) => {
           let bal = p, bp = 0, bs = 0, spend = draw;
           for (let y = 0; y < byears; y++) {
@@ -455,9 +471,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           return bal;
         };
 
-        // Survival = reaching claim age with at least the reserve. minBal === 0 reduces to
-        // "didn't deplete." Rigid is the no-flex stress; the flexed run mirrors the strategy
-        // the headline assumes, and is what drives the override when dynamic mode is on.
         let surviveRigid = 0, surviveFlex = 0;
         const endBalances: number[] = [];
         for (let t = 0; t < tr; t++) {
@@ -471,9 +484,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         const median = endBalances[Math.floor(endBalances.length / 2)];
         const p10 = endBalances[Math.floor(endBalances.length * 0.10)];
 
-        // For a long bridge, the dominant lever is when you claim SS. Show how the reserve
-        // odds move across plausible claim ages, under the same spending policy as the headline
-        // (flexed when dynamic is on) so the current-age row corroborates the headline number.
         const claimSensitivity: { claimAge: number; survive: number }[] = [];
         if (bridgeYears >= 10) {
           const sTrials = Math.min(tr, 1000);
@@ -498,10 +508,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         };
       }
 
-      // Bridge guardrail: a one-sided safety floor — if the bridge reserve odds are below the
-      // user's threshold, the main zone is capped at "cut" (or "extCut" when the miss is large,
-      // mirroring the main band's extended zone). High bridge odds are never a signal to raise
-      // spending, just confirmation the bridge is safe.
       let finalZone = zone;
       let bridgeOverrode = false;
       if (bridgeGuardrail && bridge && bridge.survive < num(bridgeFloor, 75)) {
@@ -518,8 +524,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       else if (finalZone === "raise" || finalZone === "extRaise") recommended = w * (1 + pct / 100);
       else recommended = w * (1 + infl / 100);
 
-      // Floor check on the real, displayed recommendation. The simulation enforces the floor
-      // inside each path; the headline figure is computed independently and must respect it too.
       let floorBound = false;
       if (dynamicMode) {
         const fl = num(spendFloor, 0);
@@ -652,8 +656,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const onTargetChange = (val: NumOrStr) => {
     const lowerDist = num(targetSuccess) - num(lowerBand);
     setTargetSuccess(val);
-    // The bridge confidence floor tracks target − offset unless the user has switched on
-    // manual override; in manual mode it only changes when they edit it directly.
     if (!bridgeFloorManual && val !== "") setBridgeFloor(clamp(num(val) - BRIDGE_CONFIDENCE_OFFSET, 50, 99));
     if (symmetric && val !== "") {
       setLowerBand(clamp(num(val) - lowerDist, 0, num(val) - 1));
@@ -663,11 +665,9 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const onBridgeFloorManualToggle = () => {
     const next = !bridgeFloorManual;
     setBridgeFloorManual(next);
-    // Returning to auto mode re-snaps the floor to the tracked default (target − offset).
     if (!next) setBridgeFloor(clamp(num(targetSuccess) - BRIDGE_CONFIDENCE_OFFSET, 50, 99));
   };
 
-  // Keep ref current so App can read live state for export
   liveDataRef.current = {
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
     targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
@@ -679,7 +679,13 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
 
   const zoneColor = result ? ZONE_COLOR[result.zone] : "#5dc9a8";
   const zoneLabel = result ? ZONE_LABEL[result.zone] : "—";
+  const zoneSubLabel = result ? ZONE_SUBLABEL[result.zone] : "Run the calculator to see your status";
   const tipProps = { activeTip, setActiveTip };
+
+  const ageValidErr = num(currentAge) >= num(endAge);
+  const lowerValidErr = num(lowerBand) >= num(targetSuccess);
+  const upperValidErr = num(upperBand) <= num(targetSuccess);
+  const floorValidErr = dynamicMode && num(spendFloor) > 0 && num(spendFloor) > num(withdrawal);
 
   return (
     <div className="pg-root">
@@ -793,12 +799,14 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         }
         .field-label { font-size: 12.5px; color: var(--text-dim); font-weight: 500; }
         .tip-trigger {
-          width: 18px; height: 18px; min-width: 18px;
+          width: 21px; height: 21px; min-width: 21px;
           border-radius: 50%; background: transparent;
           border: 1px solid var(--text-faint); color: var(--text-faint);
-          font-size: 10px; line-height: 1; cursor: pointer; padding: 0;
+          font-size: 8px; line-height: 1; cursor: pointer; padding: 0;
           display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
         }
+        .tip-trigger:hover { border-color: var(--accent); color: var(--accent); }
         .tip-trigger:active { border-color: var(--accent); color: var(--accent); }
         .tip-text {
           font-size: 12px; color: var(--text-dim);
@@ -815,6 +823,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         .field-input:focus { outline: none; border-color: var(--accent); }
         .field-input:disabled { opacity: 0.5; cursor: not-allowed; background: var(--panel); }
         .field-input.highlight { border-color: #d97706; box-shadow: 0 0 0 2px rgba(217,119,6,0.25); }
+        .field-input.err { border-color: #b91c1c; box-shadow: 0 0 0 2px rgba(185,28,28,0.18); }
         .field-suffix {
           position: absolute; right: 12px; color: var(--text-faint);
           font-size: 13px; pointer-events: none;
@@ -825,33 +834,85 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         }
         .field-input.has-prefix { padding-left: 24px; }
         .field-hint { font-size: 11.5px; color: var(--text-faint); margin: 5px 0 0; }
+        .field-hint.err { color: #b91c1c; }
         .hint-link {
           background: none; border: none; padding: 0; font: inherit;
           color: var(--accent); cursor: pointer; text-decoration: underline;
         }
         .hint-link:active { color: var(--text); }
         .pg-result-sticky { position: sticky; top: 14px; }
+
+        /* Stale / validation banners */
+        .stale-banner {
+          background: #fffbeb;
+          border: 1px solid #fbbf24;
+          color: #92400e;
+          font-size: 12px;
+          font-weight: 500;
+          padding: 8px 12px;
+          border-radius: 7px;
+          margin-bottom: 10px;
+          text-align: center;
+        }
+        .validation-banner {
+          background: #fee2e2;
+          border: 1px solid #fca5a5;
+          color: #b91c1c;
+          border-radius: 7px;
+          padding: 10px 12px;
+          font-size: 12.5px;
+          line-height: 1.6;
+          margin-bottom: 10px;
+        }
+        .validation-banner > div + div { margin-top: 3px; }
+
+        /* Results panel */
         .result-zone { border-radius: 10px; padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); }
         .result-zone-label {
           font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em;
-          font-weight: 600; margin-bottom: 6px; display: flex; align-items: center;
+          font-weight: 600; margin-bottom: 4px; display: flex; align-items: center;
+        }
+        .result-zone-sublabel {
+          font-size: 12px; line-height: 1.4; margin-bottom: 12px;
         }
         .result-amount {
           font-family: 'Crimson Text', Georgia, serif;
-          font-size: 36px; font-weight: 600; line-height: 1.1; margin: 4px 0;
+          font-size: 36px; font-weight: 600; line-height: 1.1; margin: 4px 0 2px;
         }
         .result-amount.stale { opacity: 0.4; }
         .result-amount-monthly {
-          font-family: var(--font-sans, system-ui, sans-serif);
-          font-size: 11px; font-weight: 400; color: var(--text-dim);
-          text-align: center; margin-top: 2px;
+          font-size: 13px; font-weight: 500; color: var(--text-dim);
+          margin-bottom: 4px;
         }
-        .result-sub { font-size: 12.5px; color: var(--text-dim); margin: 4px 0 0; }
+        .result-sub { font-size: 12px; color: var(--text-faint); margin: 0; }
         .floor-warning {
-          margin: 12px auto 0; max-width: 360px; text-align: left;
+          margin: 12px 0 0; text-align: left;
           background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px;
           color: #92400e; font-size: 12px; line-height: 1.45; padding: 9px 11px;
         }
+
+        /* Success probability before/after pair */
+        .success-pair-row {
+          padding: 12px 0;
+          border-bottom: 1px solid var(--border);
+        }
+        .success-pair-section-label {
+          font-size: 11.5px; color: var(--text-dim); font-weight: 500; margin-bottom: 8px;
+        }
+        .success-pair {
+          display: flex; align-items: center; gap: 14px;
+        }
+        .success-pair-item { text-align: center; }
+        .success-pair-value {
+          font-family: 'Crimson Text', Georgia, serif;
+          font-size: 26px; font-weight: 600; line-height: 1;
+        }
+        .success-pair-item-label {
+          font-size: 10.5px; color: var(--text-faint); margin-top: 2px;
+        }
+        .success-pair-arrow { font-size: 18px; color: var(--text-faint); flex-shrink: 0; }
+
+        /* Stats */
         .result-stat-row {
           display: flex; justify-content: space-between; gap: 10px;
           padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 12.5px;
@@ -859,14 +920,61 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         .result-stat-row:last-child { border-bottom: none; }
         .result-stat-label { color: var(--text-dim); }
         .result-stat-value { font-weight: 600; text-align: right; }
+        .ref-line .result-stat-label, .ref-line .result-stat-value { color: var(--text-faint); font-weight: 400; font-size: 12px; }
+        .ref-delta { color: #15803d; }
+
+        /* Details collapsible */
+        .details-toggle {
+          width: 100%; background: none;
+          border: none; border-top: 1px solid var(--border);
+          padding: 9px 0 5px;
+          font-size: 11.5px; color: var(--text-faint);
+          cursor: pointer; text-align: left;
+          font-family: inherit; margin-top: 4px;
+        }
+        .details-toggle:hover { color: var(--text-dim); }
+        .details-section { padding-top: 4px; }
+
+        /* Action buttons */
         .calc-btn {
           width: 100%; padding: 13px; border-radius: 8px; border: none;
           background: var(--accent); color: #fff; font-size: 14.5px;
           font-weight: 600; cursor: pointer; font-family: inherit; min-height: 48px;
-          margin-bottom: 12px;
+          margin-bottom: 10px;
         }
         .calc-btn:disabled { opacity: 0.6; cursor: default; }
-        .calc-btn.stale { box-shadow: 0 0 0 2px rgba(93,156,232,0.3); }
+        .calc-btn.stale { box-shadow: 0 0 0 3px rgba(14,165,233,0.3); }
+        .btn-row { display: flex; gap: 10px; margin-bottom: 14px; }
+        .btn {
+          flex: 1; padding: 11px 14px; border-radius: 7px;
+          border: 1px solid var(--border); background: var(--panel-2);
+          color: var(--text); font-size: 13px; font-weight: 500;
+          cursor: pointer; min-height: 44px; font-family: inherit;
+        }
+        .btn:active { border-color: var(--accent); }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .save-msg { font-size: 12px; color: var(--text-faint); margin-bottom: 10px; text-align: center; }
+        .save-msg.error { color: #e85d5d; }
+
+        /* Bridge */
+        .bridge-box {
+          margin-top: 12px; padding: 12px 14px;
+          background: var(--panel-2); border: 1px solid var(--border);
+          border-left: 3px solid #d97706; border-radius: 8px;
+        }
+        .bridge-title {
+          font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em;
+          font-weight: 600; color: #d97706; margin-bottom: 6px;
+        }
+        .bridge-box .result-stat-row { padding: 7px 0; }
+        .bridge-note { font-size: 11px; color: var(--text-faint); margin: 8px 0 0; line-height: 1.5; }
+
+        /* Chart */
+        .chart-wrap { margin-top: 6px; height: 240px; }
+        .chart-caption { font-size: 11.5px; color: var(--text-faint); margin: 6px 0 0; line-height: 1.5; }
+        .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+        /* Toggle */
         .toggle-row {
           display: flex; align-items: center; justify-content: space-between;
           padding: 10px 0; width: 100%;
@@ -883,33 +991,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           border-radius: 50%; background: #fff; transition: left 0.15s;
         }
         .toggle-switch.on .toggle-knob { left: 18px; }
-        .btn-row { display: flex; gap: 10px; margin-top: 14px; }
-        .bridge-box {
-          margin-top: 12px; padding: 12px 14px;
-          background: var(--panel-2); border: 1px solid var(--border);
-          border-left: 3px solid #d97706; border-radius: 8px;
-        }
-        .bridge-title {
-          font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em;
-          font-weight: 600; color: #d97706; margin-bottom: 6px;
-        }
-        .bridge-box .result-stat-row { padding: 7px 0; }
-        .bridge-note { font-size: 11px; color: var(--text-faint); margin: 8px 0 0; line-height: 1.5; }
-        .ref-line .result-stat-label, .ref-line .result-stat-value { color: var(--text-faint); font-weight: 400; font-size: 12px; }
-        .ref-delta { color: #15803d; }
-        .btn {
-          flex: 1; padding: 11px 14px; border-radius: 7px;
-          border: 1px solid var(--border); background: var(--panel-2);
-          color: var(--text); font-size: 13px; font-weight: 500;
-          cursor: pointer; min-height: 44px; font-family: inherit;
-        }
-        .btn:active { border-color: var(--accent); }
-        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-        .save-msg { font-size: 12px; color: var(--text-faint); margin-top: 8px; text-align: center; }
-        .save-msg.error { color: #e85d5d; }
-        .chart-wrap { margin-top: 6px; height: 190px; }
-        .chart-caption { font-size: 11.5px; color: var(--text-faint); margin: 6px 0 0; line-height: 1.5; }
-        .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+        /* Engine toggle */
         .engine-toggle {
           display: flex; gap: 6px; margin-bottom: 16px;
           background: var(--panel-2); padding: 4px; border-radius: 8px;
@@ -927,6 +1010,32 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           <h1 className="pg-title">Probability-of-Success Guardrails</h1>
           <button className="pg-info-btn" onClick={() => setInfoOpen(true)} aria-label="About this calculator">?</button>
         </div>
+
+        {resetConfirmOpen && (
+          <div className="pg-info-overlay" onClick={() => setResetConfirmOpen(false)}>
+            <div className="pg-info-modal" style={{ maxWidth: 360 }} onClick={e => e.stopPropagation()}>
+              <div className="pg-info-modal-header">
+                <strong>Reset to defaults?</strong>
+                <button className="pg-info-modal-close" onClick={() => setResetConfirmOpen(false)} aria-label="Cancel">×</button>
+              </div>
+              <div className="pg-info-body">
+                <p style={{ marginBottom: 16 }}>All inputs will be restored to their default values. Any unsaved changes will be lost.</p>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button
+                    className="btn"
+                    style={{ flex: 1 }}
+                    onClick={() => setResetConfirmOpen(false)}
+                  >Cancel</button>
+                  <button
+                    className="btn"
+                    style={{ flex: 1, background: "#b91c1c", borderColor: "#b91c1c", color: "#fff" }}
+                    onClick={() => { setResetConfirmOpen(false); handleReset(); }}
+                  >Reset</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {infoOpen && (
           <div className="pg-info-overlay" onClick={() => setInfoOpen(false)}>
@@ -954,55 +1063,121 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         )}
 
         <div className="pg-grid">
+          {/* ── LEFT COLUMN ── */}
           <div>
+            {/* 1. Current position — changed most often (portfolio, withdrawal, age) */}
             <div className="pg-panel">
               <h2 className="pg-panel-title">Current position</h2>
               <div className="field-row">
                 <Field id="portfolio" label="Portfolio balance" value={portfolio} onChange={setPortfolio} suffix="$" step={10000} {...tipProps} />
-                <Field id="withdrawal" label="Current withdrawal" value={withdrawal} onChange={setWithdrawal} suffix="$" step={1000} {...tipProps} />
+                <Field
+                  id="withdrawal"
+                  label="Current withdrawal"
+                  value={withdrawal}
+                  onChange={setWithdrawal}
+                  suffix="$"
+                  step={1000}
+                  hint={num(portfolio) > 0 ? `${withdrawalRate.toFixed(2)}% of portfolio` : undefined}
+                  {...tipProps}
+                />
               </div>
               <div className="field-row">
                 <Field id="currentAge" label="Current age" value={currentAge} onChange={setCurrentAge} step={1} {...tipProps} />
-                <Field id="endAge" label="Plan through age" value={endAge} onChange={setEndAge} step={1} hint={`${years} years remaining`} {...tipProps} />
+                <Field
+                  id="endAge"
+                  label="Plan through age"
+                  value={endAge}
+                  onChange={setEndAge}
+                  step={1}
+                  highlight={ageValidErr}
+                  hint={ageValidErr
+                    ? <span className="err">End age must exceed current age</span>
+                    : `${years} years remaining`}
+                  {...tipProps}
+                />
               </div>
             </div>
 
+            {/* 2. Guardrail bands — core policy, referenced on every check */}
             <div className="pg-panel">
-              <h2 className="pg-panel-title">Market engine</h2>
-              <div className="engine-toggle">
+              <h2 className="pg-panel-title">Guardrail bands</h2>
+              <Field id="targetSuccess" label="Target success rate" value={targetSuccess} onChange={onTargetChange} suffix="%" step={1} min={50} max={99} {...tipProps} />
+              <div className="toggle-row">
+                <span className="toggle-label">Keep bands symmetric around target</span>
                 <button
-                  className={`engine-btn ${engine === "normal" ? "active" : ""}`}
-                  onClick={() => setEngine("normal")}
-                >Normal distribution</button>
-                <button
-                  className={`engine-btn ${engine === "historical" ? "active" : ""}`}
-                  onClick={() => setEngine("historical")}
-                >Historical bootstrap</button>
+                  className={`toggle-switch ${symmetric ? "on" : ""}`}
+                  onClick={() => setSymmetric(!symmetric)}
+                  aria-label="Toggle symmetric bands"
+                >
+                  <span className="toggle-knob" />
+                </button>
               </div>
-
-              {engine === "normal" ? (
-                <div className="field-row">
-                  <Field id="ret" label="Expected return" value={ret} onChange={setRet} suffix="%" step={0.5} {...tipProps} />
-                  <Field id="vol" label="Volatility (SD)" value={vol} onChange={setVol} suffix="%" step={0.5} {...tipProps} />
-                </div>
-              ) : (
-                <>
-                  <div className="field-row">
-                    <Field id="stockPct" label="Stock allocation" value={stockPct} onChange={setStockPct} suffix="%" step={5} min={0} max={100} {...tipProps} />
-                    <Field id="haircut" label="Return haircut" value={haircut} onChange={setHaircut} suffix="pts" step={0.25} {...tipProps} />
-                  </div>
-                  <Field id="blockLen" label="Block length" value={blockLen} onChange={setBlockLen} suffix="yrs" step={1} min={1} max={20} {...tipProps} />
-                  <p className="field-hint" style={{ marginTop: -4 }}>
-                    Samples real US stock/bond returns (1928–2024) in {clamp(num(blockLen, 5), 1, 20)}-year blocks, minus a {num(haircut)}pt haircut. Preserves historical crash-clustering that the normal engine misses.
-                  </p>
-                </>
-              )}
-              <div className="field-row" style={{ marginTop: 14 }}>
-                <Field id="inf" label="Inflation" value={inf} onChange={setInf} suffix="%" step={0.5} {...tipProps} />
-                <Field id="trials" label="Simulation trials" value={trials} onChange={setTrials} step={500} min={100} max={5000} {...tipProps} />
+              <div className="field-row">
+                <Field
+                  id="lowerBand"
+                  label="Lower guardrail (cut)"
+                  value={lowerBand}
+                  onChange={onLowerChange}
+                  suffix="%"
+                  step={1}
+                  min={0}
+                  highlight={lowerValidErr}
+                  hint={lowerValidErr ? <span className="err">Must be below target ({fmtPct(num(targetSuccess), 0)})</span> : undefined}
+                  {...tipProps}
+                />
+                <Field
+                  id="upperBand"
+                  label="Upper guardrail (raise)"
+                  value={upperBand}
+                  onChange={onUpperChange}
+                  suffix="%"
+                  step={1}
+                  max={100}
+                  highlight={upperValidErr}
+                  hint={upperValidErr ? <span className="err">Must be above target ({fmtPct(num(targetSuccess), 0)})</span> : undefined}
+                  {...tipProps}
+                />
               </div>
+              <div className="field-row">
+                <Field id="adjust" label="Standard adjustment" value={adjust} onChange={setAdjust} suffix="%" step={1} {...tipProps} />
+                <Field id="extWidth" label="Deep-zone buffer" value={extWidth} onChange={setExtWidth} suffix="pts" step={1} {...tipProps} />
+              </div>
+              <Field id="extAdjust" label="Deep cut / raise size" value={extAdjust} onChange={setExtAdjust} suffix="%" step={1} {...tipProps} />
             </div>
 
+            {/* 3. Spending strategy — set alongside guardrails */}
+            <div className="pg-panel">
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: dynamicMode ? 14 : 4 }}>
+                <h2 className="pg-panel-title" style={{ margin: 0 }}>Spending strategy</h2>
+                <button
+                  className={`toggle-switch ${dynamicMode ? "on" : ""}`}
+                  onClick={() => setDynamicMode(!dynamicMode)}
+                  aria-label="Toggle dynamic guardrails"
+                >
+                  <span className="toggle-knob" />
+                </button>
+              </div>
+              <p className="field-hint" style={{ marginTop: 0, marginBottom: dynamicMode ? 12 : 0 }}>
+                {dynamicMode
+                  ? "Dynamic (recommended): spending flexes — cut or raised inside each simulated path when the withdrawal rate breaches the bands. This models the strategy you'd actually follow, so the headline success rate reflects it."
+                  : "Static: spending held fixed in real terms every year. This is a strawman that ignores the whole point of guardrails — the headline rate will understate your real robustness. Leave dynamic on unless you're deliberately testing the no-flex case."}
+              </p>
+              {dynamicMode && (
+                <Field
+                  id="spendFloor"
+                  label="Spending floor (cuts stop here)"
+                  value={spendFloor}
+                  onChange={setSpendFloor}
+                  suffix="$"
+                  step={1000}
+                  highlight={floorValidErr}
+                  hint={floorValidErr ? <span className="err">Floor exceeds current withdrawal — cuts would never trigger</span> : undefined}
+                  {...tipProps}
+                />
+              )}
+            </div>
+
+            {/* 4. Social Security — one-time setup, important but set-and-forget */}
             <div className="pg-panel">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ssEnabled ? 14 : 0 }}>
                 <h2 className="pg-panel-title" style={{ margin: 0 }}>Social Security</h2>
@@ -1082,80 +1257,108 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
               )}
             </div>
 
+            {/* 5. Market engine — advanced, rarely changed after initial setup */}
             <div className="pg-panel">
-              <h2 className="pg-panel-title">Guardrail bands</h2>
-              <Field id="targetSuccess" label="Target success rate" value={targetSuccess} onChange={onTargetChange} suffix="%" step={1} min={50} max={99} {...tipProps} />
-              <div className="toggle-row">
-                <span className="toggle-label">Keep bands symmetric around target</span>
+              <h2 className="pg-panel-title">Market engine</h2>
+              <div className="engine-toggle">
                 <button
-                  className={`toggle-switch ${symmetric ? "on" : ""}`}
-                  onClick={() => setSymmetric(!symmetric)}
-                  aria-label="Toggle symmetric bands"
-                >
-                  <span className="toggle-knob" />
-                </button>
+                  className={`engine-btn ${engine === "normal" ? "active" : ""}`}
+                  onClick={() => setEngine("normal")}
+                >Normal distribution</button>
+                <button
+                  className={`engine-btn ${engine === "historical" ? "active" : ""}`}
+                  onClick={() => setEngine("historical")}
+                >Historical bootstrap</button>
               </div>
-              <div className="field-row">
-                <Field id="lowerBand" label="Lower guardrail (cut)" value={lowerBand} onChange={onLowerChange} suffix="%" step={1} min={0} {...tipProps} />
-                <Field id="upperBand" label="Upper guardrail (raise)" value={upperBand} onChange={onUpperChange} suffix="%" step={1} max={100} {...tipProps} />
-              </div>
-              <div className="field-row">
-                <Field id="adjust" label="Standard adjustment" value={adjust} onChange={setAdjust} suffix="%" step={1} {...tipProps} />
-                <Field id="extWidth" label="Extended zone width" value={extWidth} onChange={setExtWidth} suffix="pts" step={1} {...tipProps} />
-              </div>
-              <Field id="extAdjust" label="Extended adjustment" value={extAdjust} onChange={setExtAdjust} suffix="%" step={1} {...tipProps} />
-            </div>
 
-            <div className="pg-panel">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: dynamicMode ? 14 : 4 }}>
-                <h2 className="pg-panel-title" style={{ margin: 0 }}>Spending strategy</h2>
-                <button
-                  className={`toggle-switch ${dynamicMode ? "on" : ""}`}
-                  onClick={() => setDynamicMode(!dynamicMode)}
-                  aria-label="Toggle dynamic guardrails"
-                >
-                  <span className="toggle-knob" />
-                </button>
-              </div>
-              <p className="field-hint" style={{ marginTop: 0, marginBottom: dynamicMode ? 12 : 0 }}>
-                {dynamicMode
-                  ? "Dynamic (recommended): spending flexes — cut or raised inside each simulated path when the withdrawal rate breaches the bands. This models the strategy you'd actually follow, so the headline success rate reflects it."
-                  : "Static: spending held fixed in real terms every year. This is a strawman that ignores the whole point of guardrails — the headline rate will understate your real robustness. Leave dynamic on unless you're deliberately testing the no-flex case."}
-              </p>
-              {dynamicMode && (
-                <Field id="spendFloor" label="Spending floor (cuts stop here)" value={spendFloor} onChange={setSpendFloor} suffix="$" step={1000} {...tipProps} />
+              {engine === "normal" ? (
+                <div className="field-row">
+                  <Field id="ret" label="Expected return" value={ret} onChange={setRet} suffix="%" step={0.5} {...tipProps} />
+                  <Field id="vol" label="Volatility (SD)" value={vol} onChange={setVol} suffix="%" step={0.5} {...tipProps} />
+                </div>
+              ) : (
+                <>
+                  <div className="field-row">
+                    <Field id="stockPct" label="Stock allocation" value={stockPct} onChange={setStockPct} suffix="%" step={5} min={0} max={100} {...tipProps} />
+                    <Field id="haircut" label="Return haircut" value={haircut} onChange={setHaircut} suffix="pts" step={0.25} {...tipProps} />
+                  </div>
+                  <Field id="blockLen" label="Block length" value={blockLen} onChange={setBlockLen} suffix="yrs" step={1} min={1} max={20} {...tipProps} />
+                  <p className="field-hint" style={{ marginTop: -4 }}>
+                    Samples real US stock/bond returns (1928–2024) in {clamp(num(blockLen, 5), 1, 20)}-year blocks, minus a {num(haircut)}pt haircut. Preserves historical crash-clustering that the normal engine misses.
+                  </p>
+                </>
               )}
+              <div className="field-row" style={{ marginTop: 14 }}>
+                <Field id="inf" label="Inflation" value={inf} onChange={setInf} suffix="%" step={0.5} {...tipProps} />
+                <Field id="trials" label="Simulation trials" value={trials} onChange={setTrials} step={500} min={100} max={5000} {...tipProps} />
+              </div>
             </div>
           </div>
 
+          {/* ── RIGHT COLUMN ── */}
           <div className="pg-result">
             <div className="pg-result-sticky">
+
+              {/* Validation errors */}
+              {validationErrors.length > 0 && (
+                <div className="validation-banner">
+                  {validationErrors.map((e, i) => <div key={i}>⚠ {e}</div>)}
+                </div>
+              )}
+
+              {/* Stale state indicator */}
+              {stale && !computing && (
+                <div className="stale-banner">Results are out of date — recalculate to update</div>
+              )}
+
+              {/* Calculate button */}
               <button
                 className={`calc-btn ${stale && !computing ? "stale" : ""}`}
                 onClick={runCalc}
-                disabled={computing}
+                disabled={computing || ageValidErr}
               >
                 {computing ? "Calculating…" : stale ? "Update results" : "Recalculate"}
               </button>
 
+              {/* Save / Reset — moved up so always visible */}
+              <div className="btn-row">
+                <button className="btn btn-primary" onClick={handleSave} disabled={saveStatus === "saving"}>
+                  {saveStatus === "saving" ? "Saving…" : "Save"}
+                </button>
+                <button className="btn" onClick={() => setResetConfirmOpen(true)}>Reset</button>
+              </div>
+              {saveStatus === "saved" && <p className="save-msg">✓ Saved {savedAt}</p>}
+              {saveStatus === "resetting" && <p className="save-msg">Reset to defaults</p>}
+              {saveStatus === "error" && <p className="save-msg error">Save failed: {saveError}</p>}
+              {!saveStatus && savedAt && <p className="save-msg">Last saved {savedAt}</p>}
+
+              {/* Main results panel */}
               <div className="pg-panel" style={{ borderColor: zoneColor }}>
+
+                {/* Zone + hero spending */}
                 <div className="result-zone">
                   <div className="result-zone-label" style={{ color: zoneColor }}>
                     <span className="legend-dot" style={{ background: zoneColor }} />
                     {zoneLabel}
                   </div>
+                  <div className="result-zone-sublabel" style={{ color: zoneColor }}>
+                    {zoneSubLabel}
+                  </div>
+
                   <div className={`result-amount ${stale ? "stale" : ""}`}>
                     {result ? fmtMoney(result.recommended) : "—"}
                   </div>
                   {result && result.recommended > 0 && (
                     <div className="result-amount-monthly">
-                      ${(result.recommended / 12).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per month
+                      {fmtMoney(result.recommended / 12)} / month
                     </div>
                   )}
                   <p className="result-sub">
-                    {result?.floorBound
-                      ? "capped at your spending floor — the guardrail math wanted to go lower"
-                      : "recommended withdrawal for this year"}
+                    {stale
+                      ? "recalculate to update"
+                      : result?.floorBound
+                        ? "capped at your spending floor"
+                        : "recommended withdrawal for this year"}
                   </p>
                   {result?.floorBound && (
                     <div className="floor-warning">
@@ -1166,53 +1369,85 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                   )}
                 </div>
 
-                <div className="result-stat-row">
-                  <span className="result-stat-label">Success rate{dynamicMode ? " (with guardrails)" : " (static)"}</span>
-                  <span className="result-stat-value">{result ? fmtPct(result.success) : "—"}</span>
-                </div>
-
-                {result && dynamicMode && result.staticSuccess != null && (
-                  <>
-                    <div className="result-stat-row ref-line">
-                      <span className="result-stat-label">For reference: fixed spending</span>
-                      <span className="result-stat-value">
-                        {fmtPct(result.staticSuccess)}
-                        {result.dynamicSuccess > result.staticSuccess && <span className="ref-delta"> · flexing adds {(result.dynamicSuccess - result.staticSuccess).toFixed(0)} pts</span>}
-                      </span>
+                {/* Success probability before → after */}
+                {result && (
+                  <div className="success-pair-row">
+                    <div className="success-pair-section-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      Success probability
+                      <button type="button" className="tip-trigger" onClick={() => setActiveTip(activeTip === "successPair" ? null : "successPair")} aria-label="About success probability">?</button>
                     </div>
-                    <div className="result-stat-row">
-                      <span className="result-stat-label">Median spending under guardrails</span>
-                      <span className="result-stat-value">{fmtMoney(result.dynamicMedianSpend)}</span>
+                    {activeTip === "successPair" && <p className="tip-text">{TIPS.successPair}</p>}
+                    <div className="success-pair">
+                      <div className="success-pair-item">
+                        <div className="success-pair-value" style={{ color: zoneColor }}>
+                          {fmtPct(result.success)}
+                        </div>
+                        <div className="success-pair-item-label">now</div>
+                      </div>
+                      <div className="success-pair-arrow">→</div>
+                      <div className="success-pair-item">
+                        <div className="success-pair-value" style={{ color: "#15803d" }}>
+                          {fmtPct(result.successAfter)}
+                        </div>
+                        <div className="success-pair-item-label">after adjustment</div>
+                      </div>
                     </div>
-                  </>
-                )}
-                {ssEnabled && (
-                  <div className="result-stat-row">
-                    <span className="result-stat-label">SS covers (at {num(ssClaimAge)})</span>
-                    <span className="result-stat-value">{fmtMoney(num(ssMonthly) * 12)}/yr</span>
                   </div>
                 )}
+
+                {/* Key stats */}
                 <div className="result-stat-row">
-                  <span className="result-stat-label">Success after adjustment</span>
-                  <span className="result-stat-value">{result ? fmtPct(result.successAfter) : "—"}</span>
+                  <span className="result-stat-label">Withdrawal rate</span>
+                  <span className="result-stat-value">{withdrawalRate.toFixed(2)}%</span>
                 </div>
                 <div className="result-stat-row">
                   <span className="result-stat-label">Target band</span>
                   <span className="result-stat-value">{fmtPct(num(lowerBand), 0)} – {fmtPct(num(upperBand), 0)}</span>
                 </div>
                 <div className="result-stat-row">
-                  <span className="result-stat-label">Withdrawal at target</span>
+                  <span className="result-stat-label">Sustainable at {fmtPct(num(targetSuccess), 0)}</span>
                   <span className="result-stat-value">{sustainableWithdrawal != null ? fmtMoney(sustainableWithdrawal) : "—"}</span>
                 </div>
-                <div className="result-stat-row">
-                  <span className="result-stat-label">Engine</span>
-                  <span className="result-stat-value">{engine === "historical" ? `Historical −${num(haircut)}pt` : "Normal dist."}</span>
-                </div>
-                <div className="result-stat-row">
-                  <span className="result-stat-label">Years remaining</span>
-                  <span className="result-stat-value">{years}</span>
-                </div>
+                {ssEnabled && (
+                  <div className="result-stat-row">
+                    <span className="result-stat-label">SS covers (at {num(ssClaimAge)})</span>
+                    <span className="result-stat-value">{fmtMoney(num(ssMonthly) * 12)}/yr</span>
+                  </div>
+                )}
 
+                {/* Collapsible details */}
+                <button className="details-toggle" onClick={() => setDetailsOpen(!detailsOpen)}>
+                  {detailsOpen ? "▲ Hide details" : "▼ Show details"}
+                </button>
+                {detailsOpen && result && (
+                  <div className="details-section">
+                    {dynamicMode && result.staticSuccess != null && (
+                      <>
+                        <div className="result-stat-row ref-line">
+                          <span className="result-stat-label">Fixed spending (reference)</span>
+                          <span className="result-stat-value">
+                            {fmtPct(result.staticSuccess)}
+                            {result.dynamicSuccess > result.staticSuccess && <span className="ref-delta"> · flexing adds {(result.dynamicSuccess - result.staticSuccess).toFixed(0)} pts</span>}
+                          </span>
+                        </div>
+                        <div className="result-stat-row">
+                          <span className="result-stat-label">Median spending w/ guardrails</span>
+                          <span className="result-stat-value">{fmtMoney(result.dynamicMedianSpend)}</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="result-stat-row">
+                      <span className="result-stat-label">Engine</span>
+                      <span className="result-stat-value">{engine === "historical" ? `Historical −${num(haircut)}pt` : "Normal dist."}</span>
+                    </div>
+                    <div className="result-stat-row">
+                      <span className="result-stat-label">Years remaining</span>
+                      <span className="result-stat-value">{years}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bridge stress box */}
                 {result && result.bridge && ssEnabled && num(ssClaimAge) > num(currentAge) && (
                   <div className="bridge-box">
                     <div className="bridge-title">Pre-SS bridge stress (age {num(currentAge)}–{result.bridge.claimAge})</div>
@@ -1266,19 +1501,9 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                     </p>
                   </div>
                 )}
-
-                <div className="btn-row">
-                  <button className="btn btn-primary" onClick={handleSave} disabled={saveStatus === "saving"}>
-                    {saveStatus === "saving" ? "Saving…" : "Save"}
-                  </button>
-                  <button className="btn" onClick={handleReset}>Reset</button>
-                </div>
-                {saveStatus === "saved" && <p className="save-msg">✓ Saved {savedAt}</p>}
-                {saveStatus === "resetting" && <p className="save-msg">Reset to defaults</p>}
-                {saveStatus === "error" && <p className="save-msg error">Save failed: {saveError}</p>}
-                {!saveStatus && savedAt && <p className="save-msg">Last saved {savedAt}</p>}
               </div>
 
+              {/* Sensitivity chart */}
               <div className="pg-panel">
                 <h2 className="pg-panel-title">Success rate vs. withdrawal</h2>
                 <div className="chart-wrap">
@@ -1298,15 +1523,24 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                         labelFormatter={(v) => fmtShort(Number(v))}
                         formatter={(v) => [fmtPct(Number(v)), "Success"]}
                       />
+                      {/* Target success rate */}
                       <ReferenceLine y={num(targetSuccess)} stroke="#15803d" strokeDasharray="4 4" />
+                      {/* Lower guardrail band */}
+                      <ReferenceLine y={num(lowerBand)} stroke="#d97706" strokeDasharray="3 3" strokeOpacity={0.75} />
+                      {/* Upper guardrail band */}
+                      <ReferenceLine y={num(upperBand)} stroke="#0d9488" strokeDasharray="3 3" strokeOpacity={0.75} />
+                      {/* Current withdrawal vertical marker */}
                       <ReferenceLine x={num(withdrawal)} stroke="#555" strokeDasharray="2 2" />
                       <Area type="monotone" dataKey="success" stroke="#0ea5e9" fill="url(#successGrad)" strokeWidth={2} isAnimationActive={false} dot={false} />
+                      {/* Dot at current position on the curve */}
+                      {result && !stale && (
+                        <ReferenceDot x={num(withdrawal)} y={result.success} r={5} fill="#0ea5e9" stroke="#fff" strokeWidth={2} />
+                      )}
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
                 <p className="chart-caption">
-                  Dashed teal = target. White line = current withdrawal. Curve shows how success probability changes if you
-                  spent more or less.
+                  Green dashed = target. Amber dashed = lower guardrail. Teal dashed = upper guardrail. Vertical line = current withdrawal. Dot = your current plan position.
                 </p>
               </div>
             </div>
