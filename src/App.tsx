@@ -705,7 +705,7 @@ function GuardrailsCalc({ onRegisterDataGetter }: { onRegisterDataGetter?: (fn: 
 export default function App() {
   const [mode, setMode] = useState<"rate" | "probability">(() => {
     const saved = localStorage.getItem(CALC_MODE_KEY);
-    return saved === "probability" ? "probability" : "rate";
+    return saved === "rate" ? "rate" : "probability";
   });
 
   const rateDataFnRef = useRef<(() => { settings: Settings; history: HistoryRecord[] }) | null>(null);
