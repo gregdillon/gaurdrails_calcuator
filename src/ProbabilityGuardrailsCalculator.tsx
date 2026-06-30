@@ -1672,6 +1672,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           </div>
 
         </div>
+
+        <p style={{ fontSize: 12, color: "#ccc", textAlign: "center", marginTop: 20 }}>For educational purposes only · Not financial advice</p>
       </div>
     </div>
   );
