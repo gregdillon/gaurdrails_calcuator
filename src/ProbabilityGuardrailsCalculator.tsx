@@ -388,6 +388,10 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   })();
   const suggestedReserveRounded = Math.round(suggestedBridgeReserve / 1000) * 1000;
 
+  useEffect(() => {
+    if (suggestedReserveRounded > 0) setBridgeMinBalance(suggestedReserveRounded);
+  }, [suggestedReserveRounded]);
+
   useEffect(() => { setStale(true); }, [
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
     targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials,
