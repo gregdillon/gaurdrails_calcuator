@@ -156,8 +156,16 @@ function simulateSuccess(p: SimParams) {
         r = randNormal((retMean - inf) / 100, retVol / 100);
       }
 
+      let ssThisYear = 0;
+      if (age >= ssClaimAge && ssAnnual > 0) {
+        ssThisYear = ssCola ? ssAnnual : ssAnnual / Math.pow(1 + inf / 100, age - ssClaimAge);
+      }
+
       if (dynamic && bal > 0) {
-        const curRate = (spend / bal) * 100;
+        // Guardrail tracks the NET portfolio draw rate (spending net of Social Security),
+        // matching Guyton-Klinger and the rate-based calculator. Using gross spend here
+        // would overstate the draw rate once SS begins and bias success upward.
+        const curRate = (Math.max(0, spend - ssThisYear) / bal) * 100;
         if (curRate >= gkUpper + gkExtWidth) spend = spend * (1 - gkExtAdjust / 100);
         else if (curRate >= gkUpper) spend = spend * (1 - gkAdjust / 100);
         else if (curRate <= gkLower - gkExtWidth) spend = spend * (1 + gkExtAdjust / 100);
@@ -165,10 +173,6 @@ function simulateSuccess(p: SimParams) {
         if (spend < spendFloor) spend = spendFloor;
       }
 
-      let ssThisYear = 0;
-      if (age >= ssClaimAge && ssAnnual > 0) {
-        ssThisYear = ssCola ? ssAnnual : ssAnnual / Math.pow(1 + inf / 100, age - ssClaimAge);
-      }
       const portfolioDraw = Math.max(0, spend - ssThisYear);
       bal = bal * (1 + r) - portfolioDraw;
       if (bal <= 0) { ok = false; break; }
@@ -427,7 +431,16 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         haircut: num(haircut, 0),
       };
 
-      const initRate = p > 0 ? (w / p) * 100 : 0;
+      // Social Security flowing in the first simulated year (0 while still in the pre-SS bridge).
+      // The guardrail band is anchored to the NET initial draw rate so it is consistent with the
+      // net rate the in-path guardrail measures — otherwise an already-claiming retiree's band
+      // would be set off gross spending and the two would disagree.
+      const ssAtStart = ssParams.ssAnnual > 0 && ssParams.currentAge >= ssParams.ssClaimAge
+        ? (ssParams.ssCola
+            ? ssParams.ssAnnual
+            : ssParams.ssAnnual / Math.pow(1 + infl / 100, ssParams.currentAge - ssParams.ssClaimAge))
+        : 0;
+      const initRate = p > 0 ? (Math.max(0, w - ssAtStart) / p) * 100 : 0;
       const gkParams = {
         gkUpper: initRate * 1.2,
         gkLower: initRate * 0.8,
@@ -550,7 +563,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       const chartTrials = Math.min(tr, 1000);
       for (let i = 0; i <= steps; i++) {
         const wi = minW + (maxW - minW) * (i / steps);
-        const wiInit = p > 0 ? (wi / p) * 100 : 0;
+        const wiInit = p > 0 ? (Math.max(0, wi - ssAtStart) / p) * 100 : 0;
         const gkP = dynamicMode
           ? { dynamic: true, gkUpper: wiInit * 1.2, gkLower: wiInit * 0.8, gkAdjust: adj, gkExtWidth: wiInit * 0.1, gkExtAdjust: eadj, spendFloor: num(spendFloor, 0) }
           : { dynamic: false };
