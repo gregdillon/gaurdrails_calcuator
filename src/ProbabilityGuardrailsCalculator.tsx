@@ -381,6 +381,18 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
 
   const withdrawalRate = num(portfolio) > 0 ? (num(withdrawal) / num(portfolio)) * 100 : 0;
 
+  // The rate that actually matters for portfolio survival is the draw NET of any Social Security
+  // already flowing — that's what the simulation's guardrail tracks (see initRate in runCalc).
+  // SS is only netted once you're claiming; during the pre-SS bridge the portfolio funds 100%,
+  // so the net rate equals the gross rate.
+  const annualSs = ssEnabled ? num(ssMonthly) * 12 : 0;
+  const ssFlowingNow = annualSs > 0 && num(currentAge) >= num(ssClaimAge)
+    ? (ssCola ? annualSs : annualSs / Math.pow(1 + num(inf) / 100, num(currentAge) - num(ssClaimAge)))
+    : 0;
+  const netPortfolioDraw = Math.max(0, num(withdrawal) - ssFlowingNow);
+  const netWithdrawalRate = num(portfolio) > 0 ? (netPortfolioDraw / num(portfolio)) * 100 : 0;
+  const ssReducesDraw = ssFlowingNow > 0 && netWithdrawalRate < withdrawalRate - 0.005;
+
   const validationErrors: string[] = [];
   if (num(currentAge) >= num(endAge)) validationErrors.push("Plan end age must exceed current age.");
   if (num(lowerBand) >= num(targetSuccess)) validationErrors.push("Lower guardrail must be below the target success rate.");
@@ -1126,7 +1138,11 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                       onChange={setWithdrawal}
                       suffix="$"
                       step={1000}
-                      hint={num(portfolio) > 0 ? `${withdrawalRate.toFixed(2)}% of portfolio` : undefined}
+                      hint={num(portfolio) > 0
+                        ? (ssReducesDraw
+                            ? `${netWithdrawalRate.toFixed(2)}% of portfolio (net of SS)`
+                            : `${withdrawalRate.toFixed(2)}% of portfolio`)
+                        : undefined}
                       {...tipProps}
                     />
                   </div>
@@ -1506,8 +1522,8 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
 
                 {/* Key stats */}
                 <div className="result-stat-row">
-                  <span className="result-stat-label">Withdrawal rate</span>
-                  <span className="result-stat-value">{withdrawalRate.toFixed(2)}%</span>
+                  <span className="result-stat-label">{ssReducesDraw ? "Portfolio draw rate" : "Withdrawal rate"}</span>
+                  <span className="result-stat-value">{(ssReducesDraw ? netWithdrawalRate : withdrawalRate).toFixed(2)}%</span>
                 </div>
                 <div className="result-stat-row">
                   <span className="result-stat-label">Target band</span>
