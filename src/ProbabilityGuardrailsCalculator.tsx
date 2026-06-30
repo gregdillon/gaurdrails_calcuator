@@ -348,6 +348,11 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
 
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [currentPositionOpen, setCurrentPositionOpen] = useState(true);
+  const [socialSecurityOpen, setSocialSecurityOpen] = useState(true);
+  const [guardrailBandsOpen, setGuardrailBandsOpen] = useState(false);
+  const [spendingStrategyOpen, setSpendingStrategyOpen] = useState(false);
+  const [marketEngineOpen, setMarketEngineOpen] = useState(false);
 
   const liveDataRef = useRef<Record<string, unknown>>({});
   const runCalcRef = useRef<() => void>(() => {});
@@ -768,11 +773,25 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           gap: 18px;
           align-items: start;
         }
+        .pg-current-position { margin-bottom: 14px; }
         @media (max-width: 820px) {
-          .pg-grid { grid-template-columns: 1fr; gap: 0; }
-          .pg-result { order: -1; margin-bottom: 18px; }
+          .pg-grid { display: flex; flex-direction: column; gap: 0; }
+          .pg-left-col { display: contents; }
+          .pg-current-position { order: 1; margin-bottom: 14px; }
+          .pg-result { order: 2; margin-bottom: 18px; }
+          .pg-left-rest { order: 3; }
           .pg-result-sticky { position: static !important; }
         }
+        .pg-panel-header {
+          width: 100%; display: flex; align-items: center; justify-content: space-between;
+          background: none; border: none; padding: 0; cursor: pointer; text-align: left;
+          font-family: inherit; gap: 8px;
+        }
+        .pg-panel-chevron {
+          font-size: 11px; color: var(--text-faint); transition: transform 0.2s;
+          display: inline-block; flex-shrink: 0;
+        }
+        .pg-panel-chevron.open { transform: rotate(180deg); }
         .pg-panel {
           background: var(--panel);
           border: 1px solid var(--border);
@@ -795,6 +814,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         }
         @media (max-width: 420px) {
           .field-row { grid-template-columns: 1fr; gap: 0; }
+          .field-row-2col { grid-template-columns: 1fr 1fr !important; gap: 12px !important; }
         }
         .field { margin-bottom: 14px; }
         .field-label-row {
@@ -1067,237 +1087,279 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         )}
 
         <div className="pg-grid">
-          {/* ── LEFT COLUMN ── */}
-          <div>
-            {/* 1. Current position — changed most often (portfolio, withdrawal, age) */}
+          <div className="pg-left-col">
+          {/* ── CURRENT POSITION (extracted to control mobile ordering) ── */}
+          <div className="pg-current-position">
             <div className="pg-panel">
-              <h2 className="pg-panel-title">Current position</h2>
-              <div className="field-row">
-                <Field id="portfolio" label="Portfolio balance" value={portfolio} onChange={setPortfolio} suffix="$" step={10000} {...tipProps} />
-                <Field
-                  id="withdrawal"
-                  label="Current withdrawal"
-                  value={withdrawal}
-                  onChange={setWithdrawal}
-                  suffix="$"
-                  step={1000}
-                  hint={num(portfolio) > 0 ? `${withdrawalRate.toFixed(2)}% of portfolio` : undefined}
-                  {...tipProps}
-                />
-              </div>
-              <div className="field-row">
-                <Field id="currentAge" label="Current age" value={currentAge} onChange={setCurrentAge} step={1} {...tipProps} />
-                <Field
-                  id="endAge"
-                  label="Plan through age"
-                  value={endAge}
-                  onChange={setEndAge}
-                  step={1}
-                  highlight={ageValidErr}
-                  hint={ageValidErr
-                    ? <span className="err">End age must exceed current age</span>
-                    : `${years} years remaining`}
-                  {...tipProps}
-                />
-              </div>
-            </div>
-
-            {/* 2. Guardrail bands — core policy, referenced on every check */}
-            <div className="pg-panel">
-              <h2 className="pg-panel-title">Guardrail bands</h2>
-              <Field id="targetSuccess" label="Target success rate" value={targetSuccess} onChange={onTargetChange} suffix="%" step={1} min={50} max={99} {...tipProps} />
-              <div className="toggle-row">
-                <span className="toggle-label">Keep bands symmetric around target</span>
-                <button
-                  className={`toggle-switch ${symmetric ? "on" : ""}`}
-                  onClick={() => setSymmetric(!symmetric)}
-                  aria-label="Toggle symmetric bands"
-                >
-                  <span className="toggle-knob" />
-                </button>
-              </div>
-              <div className="field-row">
-                <Field
-                  id="lowerBand"
-                  label="Lower guardrail (cut)"
-                  value={lowerBand}
-                  onChange={onLowerChange}
-                  suffix="%"
-                  step={1}
-                  min={0}
-                  highlight={lowerValidErr}
-                  hint={lowerValidErr ? <span className="err">Must be below target ({fmtPct(num(targetSuccess), 0)})</span> : undefined}
-                  {...tipProps}
-                />
-                <Field
-                  id="upperBand"
-                  label="Upper guardrail (raise)"
-                  value={upperBand}
-                  onChange={onUpperChange}
-                  suffix="%"
-                  step={1}
-                  max={100}
-                  highlight={upperValidErr}
-                  hint={upperValidErr ? <span className="err">Must be above target ({fmtPct(num(targetSuccess), 0)})</span> : undefined}
-                  {...tipProps}
-                />
-              </div>
-              <div className="field-row">
-                <Field id="adjust" label="Standard adjustment" value={adjust} onChange={setAdjust} suffix="%" step={1} {...tipProps} />
-                <Field id="extWidth" label="Deep-zone buffer" value={extWidth} onChange={setExtWidth} suffix="pts" step={1} {...tipProps} />
-              </div>
-              <Field id="extAdjust" label="Deep cut / raise size" value={extAdjust} onChange={setExtAdjust} suffix="%" step={1} {...tipProps} />
-            </div>
-
-            {/* 3. Spending strategy — set alongside guardrails */}
-            <div className="pg-panel">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: dynamicMode ? 14 : 4 }}>
-                <h2 className="pg-panel-title" style={{ margin: 0 }}>Spending strategy</h2>
-                <button
-                  className={`toggle-switch ${dynamicMode ? "on" : ""}`}
-                  onClick={() => setDynamicMode(!dynamicMode)}
-                  aria-label="Toggle dynamic guardrails"
-                >
-                  <span className="toggle-knob" />
-                </button>
-              </div>
-              <p className="field-hint" style={{ marginTop: 0, marginBottom: dynamicMode ? 12 : 0 }}>
-                {dynamicMode
-                  ? "Dynamic (recommended): spending flexes — cut or raised inside each simulated path when the withdrawal rate breaches the bands. This models the strategy you'd actually follow, so the headline success rate reflects it."
-                  : "Static: spending held fixed in real terms every year. This is a strawman that ignores the whole point of guardrails — the headline rate will understate your real robustness. Leave dynamic on unless you're deliberately testing the no-flex case."}
-              </p>
-              {dynamicMode && (
-                <Field
-                  id="spendFloor"
-                  label="Spending floor (cuts stop here)"
-                  value={spendFloor}
-                  onChange={setSpendFloor}
-                  suffix="$"
-                  step={1000}
-                  highlight={floorValidErr}
-                  hint={floorValidErr ? <span className="err">Floor exceeds current withdrawal — cuts would never trigger</span> : undefined}
-                  {...tipProps}
-                />
+              <button className="pg-panel-header" onClick={() => setCurrentPositionOpen(o => !o)}>
+                <h2 className="pg-panel-title" style={{ margin: 0 }}>Current position</h2>
+                <span className={`pg-panel-chevron ${currentPositionOpen ? "open" : ""}`}>▼</span>
+              </button>
+              {currentPositionOpen && (
+                <div style={{ marginTop: 14 }}>
+                  <div className="field-row">
+                    <Field id="portfolio" label="Portfolio balance" value={portfolio} onChange={setPortfolio} suffix="$" step={10000} {...tipProps} />
+                    <Field
+                      id="withdrawal"
+                      label="Current withdrawal"
+                      value={withdrawal}
+                      onChange={setWithdrawal}
+                      suffix="$"
+                      step={1000}
+                      hint={num(portfolio) > 0 ? `${withdrawalRate.toFixed(2)}% of portfolio` : undefined}
+                      {...tipProps}
+                    />
+                  </div>
+                  <div className="field-row field-row-2col">
+                    <Field id="currentAge" label="Current age" value={currentAge} onChange={setCurrentAge} step={1} {...tipProps} />
+                    <Field
+                      id="endAge"
+                      label="Plan through age"
+                      value={endAge}
+                      onChange={setEndAge}
+                      step={1}
+                      highlight={ageValidErr}
+                      hint={ageValidErr
+                        ? <span className="err">End age must exceed current age</span>
+                        : `${years} years remaining`}
+                      {...tipProps}
+                    />
+                  </div>
+                </div>
               )}
             </div>
+          </div>
 
-            {/* 4. Social Security — one-time setup, important but set-and-forget */}
+          {/* ── REST OF LEFT COLUMN ── */}
+          <div className="pg-left-rest">
+
+            {/* Social Security — moved above guardrail bands */}
             <div className="pg-panel">
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ssEnabled ? 14 : 0 }}>
+              <button className="pg-panel-header" onClick={() => setSocialSecurityOpen(o => !o)}>
                 <h2 className="pg-panel-title" style={{ margin: 0 }}>Social Security</h2>
-                <button
-                  className={`toggle-switch ${ssEnabled ? "on" : ""}`}
-                  onClick={() => setSsEnabled(!ssEnabled)}
-                  aria-label="Toggle Social Security"
-                >
-                  <span className="toggle-knob" />
-                </button>
-              </div>
-              {ssEnabled && (
-                <>
-                  <div className="field-row">
-                    <Field id="ssClaimAge" label="Claim age" value={ssClaimAge} onChange={setSsClaimAge} step={1} min={62} max={70} {...tipProps} />
-                    <Field id="ssMonthly" label="Monthly benefit" value={ssMonthly} onChange={setSsMonthly} suffix="$" step={100} {...tipProps} />
-                  </div>
-                  <div className="toggle-row">
-                    <span className="toggle-label">Inflation-adjusted (COLA)</span>
+                <span className={`pg-panel-chevron ${socialSecurityOpen ? "open" : ""}`}>▼</span>
+              </button>
+              {socialSecurityOpen && (
+                <div style={{ marginTop: 14 }}>
+                  <div className="toggle-row" style={{ paddingTop: 0 }}>
+                    <span className="toggle-label">Enable Social Security</span>
                     <button
-                      className={`toggle-switch ${ssCola ? "on" : ""}`}
-                      onClick={() => setSsCola(!ssCola)}
-                      aria-label="Toggle COLA"
+                      className={`toggle-switch ${ssEnabled ? "on" : ""}`}
+                      onClick={() => setSsEnabled(!ssEnabled)}
+                      aria-label="Toggle Social Security"
                     >
                       <span className="toggle-knob" />
                     </button>
                   </div>
-                  <p className="field-hint" style={{ marginTop: 4 }}>
-                    {fmtMoney(num(ssMonthly) * 12)}/yr starting at age {num(ssClaimAge)} reduces the portfolio draw, not your spending.
-                  </p>
-                  {num(ssClaimAge) > num(currentAge) && (
+                  {ssEnabled && (
                     <>
-                      <div className="toggle-row" style={{ marginTop: 6 }}>
-                        <span className="toggle-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          Factor bridge survival into spending decisions
-                          <button type="button" className="tip-trigger" onClick={() => setActiveTip(activeTip === "bridgeGuardrail" ? null : "bridgeGuardrail")} aria-label="About bridge guardrail">?</button>
-                        </span>
-                        <button className={`toggle-switch ${bridgeGuardrail ? "on" : ""}`} onClick={() => setBridgeGuardrail(!bridgeGuardrail)} aria-label="Toggle bridge guardrail">
+                      <div className="field-row">
+                        <Field id="ssClaimAge" label="Claim age" value={ssClaimAge} onChange={setSsClaimAge} step={1} min={62} max={70} {...tipProps} />
+                        <Field id="ssMonthly" label="Monthly benefit" value={ssMonthly} onChange={setSsMonthly} suffix="$" step={100} {...tipProps} />
+                      </div>
+                      <div className="toggle-row">
+                        <span className="toggle-label">Inflation-adjusted (COLA)</span>
+                        <button
+                          className={`toggle-switch ${ssCola ? "on" : ""}`}
+                          onClick={() => setSsCola(!ssCola)}
+                          aria-label="Toggle COLA"
+                        >
                           <span className="toggle-knob" />
                         </button>
                       </div>
-                      {activeTip === "bridgeGuardrail" && <p className="tip-text">{TIPS.bridgeGuardrail}</p>}
-                      {bridgeGuardrail && (
+                      <p className="field-hint" style={{ marginTop: 4 }}>
+                        {fmtMoney(num(ssMonthly) * 12)}/yr starting at age {num(ssClaimAge)} reduces the portfolio draw, not your spending.
+                      </p>
+                      {num(ssClaimAge) > num(currentAge) && (
                         <>
-                          <Field id="bridgeMinBalance" label="Min. balance at claim age" value={bridgeMinBalance} onChange={setBridgeMinBalance} suffix="$" step={10000} min={0}
-                            highlight={suggestedBridgeReserve > 0 && num(bridgeMinBalance) !== suggestedReserveRounded}
-                            hint={suggestedBridgeReserve > 0
-                              ? (<>
-                                  {"Suggested ≈ "}
-                                  <button type="button" className="hint-link" onClick={() => setBridgeMinBalance(suggestedReserveRounded)}>
-                                    {fmtShort(suggestedBridgeReserve)}
-                                  </button>
-                                  {` — covers your ${fmtShort(Math.max(0, num(withdrawal) - (ssEnabled ? num(ssMonthly) * 12 : 0)))}/yr post-SS gap to age ${num(endAge)}. Set to 0 to score on not running out.`}
-                                </>)
-                              : "Reach claim age with at least this much. Set to 0 to score on not running out."}
-                            {...tipProps} />
-                          <div className="toggle-row">
-                            <span className="toggle-label">Set required confidence manually</span>
-                            <button
-                              className={`toggle-switch ${bridgeFloorManual ? "on" : ""}`}
-                              onClick={onBridgeFloorManualToggle}
-                              aria-label="Toggle manual confidence override"
-                            >
+                          <div className="toggle-row" style={{ marginTop: 6 }}>
+                            <span className="toggle-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              Factor bridge survival into spending decisions
+                              <button type="button" className="tip-trigger" onClick={() => setActiveTip(activeTip === "bridgeGuardrail" ? null : "bridgeGuardrail")} aria-label="About bridge guardrail">?</button>
+                            </span>
+                            <button className={`toggle-switch ${bridgeGuardrail ? "on" : ""}`} onClick={() => setBridgeGuardrail(!bridgeGuardrail)} aria-label="Toggle bridge guardrail">
                               <span className="toggle-knob" />
                             </button>
                           </div>
-                          <Field id="bridgeFloor" label="Required confidence" value={bridgeFloor} onChange={setBridgeFloor} suffix="%" step={1} min={50} max={99} disabled={!bridgeFloorManual}
-                            hint={bridgeFloorManual
-                              ? `Cut if the chance of reaching age ${num(ssClaimAge)} with ≥ ${fmtShort(num(bridgeMinBalance, 0))} falls below ${num(bridgeFloor, 75)}% — your reserve must clear in all but the worst ${100 - num(bridgeFloor, 75)}% of outcomes.`
-                              : `Auto-tracking your ${num(targetSuccess)}% target − ${BRIDGE_CONFIDENCE_OFFSET} = ${num(bridgeFloor, 75)}%. Turn on manual override to set a custom value.`}
-                            {...tipProps} />
+                          {activeTip === "bridgeGuardrail" && <p className="tip-text">{TIPS.bridgeGuardrail}</p>}
+                          {bridgeGuardrail && (
+                            <>
+                              <Field id="bridgeMinBalance" label="Min. balance at claim age" value={bridgeMinBalance} onChange={setBridgeMinBalance} suffix="$" step={10000} min={0}
+                                highlight={suggestedBridgeReserve > 0 && num(bridgeMinBalance) !== suggestedReserveRounded}
+                                hint={suggestedBridgeReserve > 0
+                                  ? (<>
+                                      {"Suggested ≈ "}
+                                      <button type="button" className="hint-link" onClick={() => setBridgeMinBalance(suggestedReserveRounded)}>
+                                        {fmtShort(suggestedBridgeReserve)}
+                                      </button>
+                                      {` — covers your ${fmtShort(Math.max(0, num(withdrawal) - (ssEnabled ? num(ssMonthly) * 12 : 0)))}/yr post-SS gap to age ${num(endAge)}. Set to 0 to score on not running out.`}
+                                    </>)
+                                  : "Reach claim age with at least this much. Set to 0 to score on not running out."}
+                                {...tipProps} />
+                              <div className="toggle-row">
+                                <span className="toggle-label">Set required confidence manually</span>
+                                <button
+                                  className={`toggle-switch ${bridgeFloorManual ? "on" : ""}`}
+                                  onClick={onBridgeFloorManualToggle}
+                                  aria-label="Toggle manual confidence override"
+                                >
+                                  <span className="toggle-knob" />
+                                </button>
+                              </div>
+                              <Field id="bridgeFloor" label="Required confidence" value={bridgeFloor} onChange={setBridgeFloor} suffix="%" step={1} min={50} max={99} disabled={!bridgeFloorManual}
+                                hint={bridgeFloorManual
+                                  ? `Cut if the chance of reaching age ${num(ssClaimAge)} with ≥ ${fmtShort(num(bridgeMinBalance, 0))} falls below ${num(bridgeFloor, 75)}% — your reserve must clear in all but the worst ${100 - num(bridgeFloor, 75)}% of outcomes.`
+                                  : `Auto-tracking your ${num(targetSuccess)}% target − ${BRIDGE_CONFIDENCE_OFFSET} = ${num(bridgeFloor, 75)}%. Turn on manual override to set a custom value.`}
+                                {...tipProps} />
+                            </>
+                          )}
                         </>
                       )}
                     </>
                   )}
-                </>
-              )}
-            </div>
-
-            {/* 5. Market engine — advanced, rarely changed after initial setup */}
-            <div className="pg-panel">
-              <h2 className="pg-panel-title">Market engine</h2>
-              <div className="engine-toggle">
-                <button
-                  className={`engine-btn ${engine === "normal" ? "active" : ""}`}
-                  onClick={() => setEngine("normal")}
-                >Normal distribution</button>
-                <button
-                  className={`engine-btn ${engine === "historical" ? "active" : ""}`}
-                  onClick={() => setEngine("historical")}
-                >Historical bootstrap</button>
-              </div>
-
-              {engine === "normal" ? (
-                <div className="field-row">
-                  <Field id="ret" label="Expected return" value={ret} onChange={setRet} suffix="%" step={0.5} {...tipProps} />
-                  <Field id="vol" label="Volatility (SD)" value={vol} onChange={setVol} suffix="%" step={0.5} {...tipProps} />
                 </div>
-              ) : (
-                <>
-                  <div className="field-row">
-                    <Field id="stockPct" label="Stock allocation" value={stockPct} onChange={setStockPct} suffix="%" step={5} min={0} max={100} {...tipProps} />
-                    <Field id="haircut" label="Return haircut" value={haircut} onChange={setHaircut} suffix="pts" step={0.25} {...tipProps} />
-                  </div>
-                  <Field id="blockLen" label="Block length" value={blockLen} onChange={setBlockLen} suffix="yrs" step={1} min={1} max={20} {...tipProps} />
-                  <p className="field-hint" style={{ marginTop: -4 }}>
-                    Samples real US stock/bond returns (1928–2024) in {clamp(num(blockLen, 5), 1, 20)}-year blocks, minus a {num(haircut)}pt haircut. Preserves historical crash-clustering that the normal engine misses.
-                  </p>
-                </>
               )}
-              <div className="field-row" style={{ marginTop: 14 }}>
-                <Field id="inf" label="Inflation" value={inf} onChange={setInf} suffix="%" step={0.5} {...tipProps} />
-                <Field id="trials" label="Simulation trials" value={trials} onChange={setTrials} step={500} min={100} max={5000} {...tipProps} />
-              </div>
             </div>
+
+            {/* Guardrail bands */}
+            <div className="pg-panel">
+              <button className="pg-panel-header" onClick={() => setGuardrailBandsOpen(o => !o)}>
+                <h2 className="pg-panel-title" style={{ margin: 0 }}>Guardrail bands</h2>
+                <span className={`pg-panel-chevron ${guardrailBandsOpen ? "open" : ""}`}>▼</span>
+              </button>
+              {guardrailBandsOpen && (
+                <div style={{ marginTop: 14 }}>
+                  <Field id="targetSuccess" label="Target success rate" value={targetSuccess} onChange={onTargetChange} suffix="%" step={1} min={50} max={99} {...tipProps} />
+                  <div className="toggle-row">
+                    <span className="toggle-label">Keep bands symmetric around target</span>
+                    <button
+                      className={`toggle-switch ${symmetric ? "on" : ""}`}
+                      onClick={() => setSymmetric(!symmetric)}
+                      aria-label="Toggle symmetric bands"
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </div>
+                  <div className="field-row">
+                    <Field
+                      id="lowerBand"
+                      label="Lower guardrail (cut)"
+                      value={lowerBand}
+                      onChange={onLowerChange}
+                      suffix="%"
+                      step={1}
+                      min={0}
+                      highlight={lowerValidErr}
+                      hint={lowerValidErr ? <span className="err">Must be below target ({fmtPct(num(targetSuccess), 0)})</span> : undefined}
+                      {...tipProps}
+                    />
+                    <Field
+                      id="upperBand"
+                      label="Upper guardrail (raise)"
+                      value={upperBand}
+                      onChange={onUpperChange}
+                      suffix="%"
+                      step={1}
+                      max={100}
+                      highlight={upperValidErr}
+                      hint={upperValidErr ? <span className="err">Must be above target ({fmtPct(num(targetSuccess), 0)})</span> : undefined}
+                      {...tipProps}
+                    />
+                  </div>
+                  <div className="field-row">
+                    <Field id="adjust" label="Standard adjustment" value={adjust} onChange={setAdjust} suffix="%" step={1} {...tipProps} />
+                    <Field id="extWidth" label="Deep-zone buffer" value={extWidth} onChange={setExtWidth} suffix="pts" step={1} {...tipProps} />
+                  </div>
+                  <Field id="extAdjust" label="Deep cut / raise size" value={extAdjust} onChange={setExtAdjust} suffix="%" step={1} {...tipProps} />
+                </div>
+              )}
+            </div>
+
+            {/* Spending strategy */}
+            <div className="pg-panel">
+              <button className="pg-panel-header" onClick={() => setSpendingStrategyOpen(o => !o)}>
+                <h2 className="pg-panel-title" style={{ margin: 0 }}>Spending strategy</h2>
+                <span className={`pg-panel-chevron ${spendingStrategyOpen ? "open" : ""}`}>▼</span>
+              </button>
+              {spendingStrategyOpen && (
+                <div style={{ marginTop: 14 }}>
+                  <div className="toggle-row" style={{ paddingTop: 0 }}>
+                    <span className="toggle-label">Dynamic guardrails</span>
+                    <button
+                      className={`toggle-switch ${dynamicMode ? "on" : ""}`}
+                      onClick={() => setDynamicMode(!dynamicMode)}
+                      aria-label="Toggle dynamic guardrails"
+                    >
+                      <span className="toggle-knob" />
+                    </button>
+                  </div>
+                  <p className="field-hint" style={{ marginTop: 0, marginBottom: dynamicMode ? 12 : 0 }}>
+                    {dynamicMode
+                      ? "Dynamic (recommended): spending flexes — cut or raised inside each simulated path when the withdrawal rate breaches the bands. This models the strategy you'd actually follow, so the headline success rate reflects it."
+                      : "Static: spending held fixed in real terms every year. This is a strawman that ignores the whole point of guardrails — the headline rate will understate your real robustness. Leave dynamic on unless you're deliberately testing the no-flex case."}
+                  </p>
+                  {dynamicMode && (
+                    <Field
+                      id="spendFloor"
+                      label="Spending floor (cuts stop here)"
+                      value={spendFloor}
+                      onChange={setSpendFloor}
+                      suffix="$"
+                      step={1000}
+                      highlight={floorValidErr}
+                      hint={floorValidErr ? <span className="err">Floor exceeds current withdrawal — cuts would never trigger</span> : undefined}
+                      {...tipProps}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Market engine */}
+            <div className="pg-panel">
+              <button className="pg-panel-header" onClick={() => setMarketEngineOpen(o => !o)}>
+                <h2 className="pg-panel-title" style={{ margin: 0 }}>Market engine</h2>
+                <span className={`pg-panel-chevron ${marketEngineOpen ? "open" : ""}`}>▼</span>
+              </button>
+              {marketEngineOpen && (
+                <div style={{ marginTop: 14 }}>
+                  <div className="engine-toggle">
+                    <button
+                      className={`engine-btn ${engine === "normal" ? "active" : ""}`}
+                      onClick={() => setEngine("normal")}
+                    >Normal distribution</button>
+                    <button
+                      className={`engine-btn ${engine === "historical" ? "active" : ""}`}
+                      onClick={() => setEngine("historical")}
+                    >Historical bootstrap</button>
+                  </div>
+                  {engine === "normal" ? (
+                    <div className="field-row">
+                      <Field id="ret" label="Expected return" value={ret} onChange={setRet} suffix="%" step={0.5} {...tipProps} />
+                      <Field id="vol" label="Volatility (SD)" value={vol} onChange={setVol} suffix="%" step={0.5} {...tipProps} />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="field-row">
+                        <Field id="stockPct" label="Stock allocation" value={stockPct} onChange={setStockPct} suffix="%" step={5} min={0} max={100} {...tipProps} />
+                        <Field id="haircut" label="Return haircut" value={haircut} onChange={setHaircut} suffix="pts" step={0.25} {...tipProps} />
+                      </div>
+                      <Field id="blockLen" label="Block length" value={blockLen} onChange={setBlockLen} suffix="yrs" step={1} min={1} max={20} {...tipProps} />
+                      <p className="field-hint" style={{ marginTop: -4 }}>
+                        Samples real US stock/bond returns (1928–2024) in {clamp(num(blockLen, 5), 1, 20)}-year blocks, minus a {num(haircut)}pt haircut. Preserves historical crash-clustering that the normal engine misses.
+                      </p>
+                    </>
+                  )}
+                  <div className="field-row" style={{ marginTop: 14 }}>
+                    <Field id="inf" label="Inflation" value={inf} onChange={setInf} suffix="%" step={0.5} {...tipProps} />
+                    <Field id="trials" label="Simulation trials" value={trials} onChange={setTrials} step={500} min={100} max={5000} {...tipProps} />
+                  </div>
+                </div>
+              )}
+            </div>
+
           </div>
+          </div>{/* end pg-left-col */}
 
           {/* ── RIGHT COLUMN ── */}
           <div className="pg-result">
@@ -1549,6 +1611,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
               </div>
             </div>
           </div>
+
         </div>
       </div>
     </div>
