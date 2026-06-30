@@ -62,6 +62,7 @@ const TIPS: Record<string, string> = {
   stockPct: "Your stock allocation. The historical engine blends real US stock and bond returns by this mix each year. Bonds are the remainder.",
   blockLen: "Length of the contiguous block sampled from history. Longer blocks preserve more of the real sequence (e.g. multi-year crashes and recoveries stay intact); 1 = independent single years.",
   spendFloor: "The lowest your spending can be cut to under dynamic guardrails. Cuts won't drive spending below this — it's your essential-expenses backstop.",
+  floorWarnPct: "Your spending floor is a fixed dollar amount, so it can quietly fall behind as your withdrawal grows with inflation. This sets the threshold (as a share of current withdrawal) below which a warning appears next to the floor field, prompting you to revisit it. Doesn't affect the calculation itself — just a reminder.",
   bridgeGuardrail: "When enabled, the chance your portfolio reaches SS claim age with at least your target reserve is treated as a safety floor. If that chance falls below the threshold you set, the spending recommendation is made more conservative — even if the full-plan success rate is in the safe zone. A badly missed floor escalates to a deeper cut. This protects against the period most exposed to sequence-of-returns risk.",
   bridgeFloor: "The minimum confidence you require of reaching SS claim age with at least your minimum balance. Below it, spending is cut regardless of the full-plan success rate. Read it as a downside test: 85% means your reserve must survive all but the worst 15% of outcomes (your ~15th-percentile balance); 75% means all but the worst 25%. It defaults to your target success rate minus 15 points — that keeps the bridge a supplementary early-warning floor rather than a second full-strength constraint that would double-count the post-SS risk already in the headline number. By default it auto-tracks your target; switch on 'Set required confidence manually' to enter a custom value that won't move when the target changes. Turning the override back off restores the tracked default.",
   bridgeMinBalance: "The portfolio balance you want to still have when Social Security starts. Success on the bridge means reaching claim age with at least this much, not merely avoiding $0 — over a long bridge, arriving with a near-empty portfolio still leaves decades to fund. A sensible value is roughly the present value of your post-SS spending shortfall (what the portfolio still has to cover once SS is flowing). Set to 0 to score the bridge purely on not running out.",
@@ -345,6 +346,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const [blockLen, setBlockLen] = useState<NumOrStr>(7);
   const [dynamicMode, setDynamicMode] = useState(true);
   const [spendFloor, setSpendFloor] = useState<NumOrStr>(60000);
+  const [floorWarnPct, setFloorWarnPct] = useState<NumOrStr>(50);
   const [bridgeGuardrail, setBridgeGuardrail] = useState(true);
   const [bridgeFloor, setBridgeFloor] = useState<NumOrStr>(DEFAULTS.targetSuccess - BRIDGE_CONFIDENCE_OFFSET);
   const [bridgeFloorManual, setBridgeFloorManual] = useState(false);
@@ -611,6 +613,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         set("blockLen", setBlockLen);
         setB("dynamicMode", setDynamicMode);
         set("spendFloor", setSpendFloor);
+        set("floorWarnPct", setFloorWarnPct);
         setB("bridgeGuardrail", setBridgeGuardrail);
         set("bridgeFloor", setBridgeFloor);
         setB("bridgeFloorManual", setBridgeFloorManual);
@@ -629,7 +632,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
       targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
       ssEnabled, ssClaimAge, ssMonthly, ssCola,
-      engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeFloorManual, bridgeMinBalance,
+      engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, floorWarnPct, bridgeGuardrail, bridgeFloor, bridgeFloorManual, bridgeMinBalance,
       savedAt: ts,
     });
     try {
@@ -654,7 +657,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     setTrials(DEFAULTS.trials); setSymmetric(false);
     setSsEnabled(true); setSsClaimAge(70); setSsMonthly(4500); setSsCola(true);
     setEngine("historical"); setHaircut(2.0); setStockPct(60); setBlockLen(7);
-    setDynamicMode(true); setSpendFloor(60000); setBridgeGuardrail(true);
+    setDynamicMode(true); setSpendFloor(60000); setFloorWarnPct(50); setBridgeGuardrail(true);
     setBridgeFloor(DEFAULTS.targetSuccess - BRIDGE_CONFIDENCE_OFFSET); setBridgeFloorManual(false);
     setBridgeMinBalance(DEFAULTS.bridgeMinBalance);
     setTimeout(() => runCalcRef.current(), 80);
@@ -694,7 +697,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
     targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
     ssEnabled, ssClaimAge, ssMonthly, ssCola,
-    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, bridgeGuardrail, bridgeFloor, bridgeFloorManual, bridgeMinBalance,
+    engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, floorWarnPct, bridgeGuardrail, bridgeFloor, bridgeFloorManual, bridgeMinBalance,
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { onRegisterDataGetter?.(() => liveDataRef.current); }, []);
@@ -708,6 +711,10 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const lowerValidErr = num(lowerBand) >= num(targetSuccess);
   const upperValidErr = num(upperBand) <= num(targetSuccess);
   const floorValidErr = dynamicMode && num(spendFloor) > 0 && num(spendFloor) > num(withdrawal);
+  // Surface when the fixed-dollar floor has slipped below the user's chosen share of current spending —
+  // a sign it may have been left to erode against inflation while the withdrawal grew, and should be revisited.
+  const floorLowWarn = dynamicMode && !floorValidErr && num(spendFloor) > 0 && num(withdrawal) > 0
+    && num(spendFloor) < (num(floorWarnPct, 50) / 100) * num(withdrawal);
 
   return (
     <div className="pg-root">
@@ -1138,6 +1145,28 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                       {...tipProps}
                     />
                   </div>
+                  <div className="field-row">
+                    <Field
+                      id="spendFloor"
+                      label="Spending floor"
+                      value={spendFloor}
+                      onChange={setSpendFloor}
+                      suffix="$"
+                      step={1000}
+                      disabled={!dynamicMode}
+                      highlight={floorValidErr || floorLowWarn}
+                      hint={!dynamicMode
+                        ? "Only applies in Dynamic guardrails mode (see Spending strategy)"
+                        : floorValidErr
+                          ? <span className="err">Floor exceeds current withdrawal — cuts would never trigger</span>
+                          : floorLowWarn
+                            ? <span style={{ color: "#d97706", fontWeight: 600 }}>Floor has dropped below {num(floorWarnPct, 50)}% of your current withdrawal — review and raise it so inflation hasn't eroded your essential-expenses backstop.</span>
+                            : (num(withdrawal) > 0
+                                ? `${((num(spendFloor) / num(withdrawal)) * 100).toFixed(0)}% of current withdrawal — your essential-expenses backstop`
+                                : undefined)}
+                      {...tipProps}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -1313,14 +1342,15 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                   </p>
                   {dynamicMode && (
                     <Field
-                      id="spendFloor"
-                      label="Spending floor (cuts stop here)"
-                      value={spendFloor}
-                      onChange={setSpendFloor}
-                      suffix="$"
-                      step={1000}
-                      highlight={floorValidErr}
-                      hint={floorValidErr ? <span className="err">Floor exceeds current withdrawal — cuts would never trigger</span> : undefined}
+                      id="floorWarnPct"
+                      label="Floor warning threshold"
+                      value={floorWarnPct}
+                      onChange={setFloorWarnPct}
+                      suffix="%"
+                      step={5}
+                      min={0}
+                      max={100}
+                      hint="Warn (in Current position) when your spending floor falls below this share of current withdrawal."
                       {...tipProps}
                     />
                   )}
