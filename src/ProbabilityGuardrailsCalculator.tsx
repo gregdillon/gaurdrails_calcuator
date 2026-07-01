@@ -23,8 +23,8 @@ const DEFAULTS = {
   vol: 12,
   inf: 3,
   targetSuccess: 90,
-  lowerBand: 70,
-  upperBand: 99,
+  lowerBand: 65,
+  upperBand: 98,
   adjust: 10,
   extWidth: 10,
   extAdjust: 20,
@@ -37,7 +37,7 @@ const DEFAULTS = {
 // The bridge confidence floor defaults to this many points below the target success rate,
 // keeping it a subordinate early-warning floor rather than a second full-strength constraint
 // that would double-count the post-SS risk already captured in the headline success number.
-const BRIDGE_CONFIDENCE_OFFSET = 15;
+const BRIDGE_CONFIDENCE_OFFSET = 20;
 
 const STORAGE_KEY = "pos-guardrails-settings";
 
@@ -67,6 +67,7 @@ const TIPS: Record<string, string> = {
   bridgeFloor: "The minimum confidence you require of reaching SS claim age with at least your minimum balance. Below it, spending is cut regardless of the full-plan success rate. Read it as a downside test: 85% means your reserve must survive all but the worst 15% of outcomes (your ~15th-percentile balance); 75% means all but the worst 25%. It defaults to your target success rate minus 15 points — that keeps the bridge a supplementary early-warning floor rather than a second full-strength constraint that would double-count the post-SS risk already in the headline number. By default it auto-tracks your target; switch on 'Set required confidence manually' to enter a custom value that won't move when the target changes. Turning the override back off restores the tracked default.",
   bridgeMinBalance: "The portfolio balance you want to still have when Social Security starts. Success on the bridge means reaching claim age with at least this much, not merely avoiding $0 — over a long bridge, arriving with a near-empty portfolio still leaves decades to fund. A sensible value is roughly the present value of your post-SS spending shortfall (what the portfolio still has to cover once SS is flowing). Set to 0 to score the bridge purely on not running out.",
   successPair: "Now: the simulated probability that your portfolio lasts through your planning horizon at your current withdrawal level. After adjustment: what that probability becomes if you follow the guardrail recommendation this year. A healthy plan sits between your lower and upper guardrail bands — the adjustment is designed to bring you back toward your target.",
+  symmetric: "A one-click helper: sets the lower guardrail so it sits the same distance below your target success rate as the upper guardrail sits above it (e.g. target 90%, upper 99% → lower becomes 81%). It anchors on the upper band because that one is capped at 100%. After clicking, both bands remain fully editable — this doesn't lock them together, it just squares them up once. The button greys out when the bands are already symmetric.",
 };
 
 function clamp(n: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, n)); }
@@ -335,7 +336,6 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
   const [extWidth, setExtWidth] = useState<NumOrStr>(DEFAULTS.extWidth);
   const [extAdjust, setExtAdjust] = useState<NumOrStr>(DEFAULTS.extAdjust);
   const [trials, setTrials] = useState<NumOrStr>(DEFAULTS.trials);
-  const [symmetric, setSymmetric] = useState(false);
   const [ssEnabled, setSsEnabled] = useState(true);
   const [ssClaimAge, setSsClaimAge] = useState<NumOrStr>(70);
   const [ssMonthly, setSsMonthly] = useState<NumOrStr>(4500);
@@ -618,7 +618,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         set("upperBand", setUpperBand); set("adjust", setAdjust);
         set("extWidth", setExtWidth); set("extAdjust", setExtAdjust);
         set("trials", setTrials);
-        setB("symmetric", setSymmetric); setB("ssEnabled", setSsEnabled);
+        setB("ssEnabled", setSsEnabled);
         set("ssClaimAge", setSsClaimAge); set("ssMonthly", setSsMonthly);
         setB("ssCola", setSsCola); setS("engine", setEngine);
         set("haircut", setHaircut); set("stockPct", setStockPct);
@@ -642,7 +642,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     const ts = new Date().toLocaleString();
     const data = JSON.stringify({
       portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
-      targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
+      targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials,
       ssEnabled, ssClaimAge, ssMonthly, ssCola,
       engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, floorWarnPct, bridgeGuardrail, bridgeFloor, bridgeFloorManual, bridgeMinBalance,
       savedAt: ts,
@@ -666,7 +666,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     setTargetSuccess(DEFAULTS.targetSuccess); setLowerBand(DEFAULTS.lowerBand);
     setUpperBand(DEFAULTS.upperBand); setAdjust(DEFAULTS.adjust);
     setExtWidth(DEFAULTS.extWidth); setExtAdjust(DEFAULTS.extAdjust);
-    setTrials(DEFAULTS.trials); setSymmetric(false);
+    setTrials(DEFAULTS.trials);
     setSsEnabled(true); setSsClaimAge(70); setSsMonthly(4500); setSsCola(true);
     setEngine("historical"); setHaircut(2.0); setStockPct(60); setBlockLen(7);
     setDynamicMode(true); setSpendFloor(60000); setFloorWarnPct(50); setBridgeGuardrail(true);
@@ -676,38 +676,30 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
     setTimeout(() => setSaveStatus(null), 1200);
   };
 
-  const onLowerChange = (val: NumOrStr) => {
-    setLowerBand(val);
-    if (symmetric && val !== "") {
-      const dist = num(targetSuccess) - num(val);
-      setUpperBand(clamp(num(targetSuccess) + dist, num(targetSuccess) + 1, 100));
-    }
-  };
-  const onUpperChange = (val: NumOrStr) => {
-    setUpperBand(val);
-    if (symmetric && val !== "") {
-      const dist = num(val) - num(targetSuccess);
-      setLowerBand(clamp(num(targetSuccess) - dist, 0, num(targetSuccess) - 1));
-    }
-  };
+  const onLowerChange = (val: NumOrStr) => setLowerBand(val);
+  const onUpperChange = (val: NumOrStr) => setUpperBand(val);
   const onTargetChange = (val: NumOrStr) => {
-    const lowerDist = num(targetSuccess) - num(lowerBand);
     setTargetSuccess(val);
     if (!bridgeFloorManual && val !== "") setBridgeFloor(clamp(num(val) - BRIDGE_CONFIDENCE_OFFSET, 50, 99));
-    if (symmetric && val !== "") {
-      setLowerBand(clamp(num(val) - lowerDist, 0, num(val) - 1));
-      setUpperBand(clamp(num(val) + lowerDist, num(val) + 1, 100));
-    }
   };
   const onBridgeFloorManualToggle = () => {
     const next = !bridgeFloorManual;
     setBridgeFloorManual(next);
     if (!next) setBridgeFloor(clamp(num(targetSuccess) - BRIDGE_CONFIDENCE_OFFSET, 50, 99));
   };
+  // One-shot: mirror the lower guardrail to match the upper's distance from the target.
+  // Anchors on the upper band because it's bounded by the 100% ceiling (a symmetric upper
+  // would often clamp), whereas the lower band has room to move.
+  const makeSymmetric = () => {
+    const dist = num(upperBand) - num(targetSuccess);
+    setLowerBand(clamp(num(targetSuccess) - dist, 0, num(targetSuccess) - 1));
+  };
+  const bandsAreSymmetric =
+    num(upperBand) - num(targetSuccess) === num(targetSuccess) - num(lowerBand);
 
   liveDataRef.current = {
     portfolio, withdrawal, currentAge, endAge, ret, vol, inf,
-    targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials, symmetric,
+    targetSuccess, lowerBand, upperBand, adjust, extWidth, extAdjust, trials,
     ssEnabled, ssClaimAge, ssMonthly, ssCola,
     engine, haircut, stockPct, blockLen, dynamicMode, spendFloor, floorWarnPct, bridgeGuardrail, bridgeFloor, bridgeFloorManual, bridgeMinBalance,
   };
@@ -1047,6 +1039,14 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           border-radius: 50%; background: #fff; transition: left 0.15s;
         }
         .toggle-switch.on .toggle-knob { left: 18px; }
+        .sym-btn {
+          padding: 7px 12px; border-radius: 7px; border: 1px solid var(--border);
+          background: var(--panel-2); color: var(--accent); font-size: 12px;
+          font-weight: 600; cursor: pointer; font-family: inherit; min-height: 34px;
+          white-space: nowrap; transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .sym-btn:hover:not(:disabled) { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .sym-btn:disabled { color: var(--text-faint); cursor: default; }
 
         /* Engine toggle */
         .engine-toggle {
@@ -1289,15 +1289,21 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                 <div style={{ marginTop: 14 }}>
                   <Field id="targetSuccess" label="Target success rate" value={targetSuccess} onChange={onTargetChange} suffix="%" step={1} min={50} max={99} {...tipProps} />
                   <div className="toggle-row">
-                    <span className="toggle-label">Keep bands symmetric around target</span>
+                    <span className="toggle-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      Symmetric bands
+                      <button type="button" className="tip-trigger" onClick={() => setActiveTip(activeTip === "symmetric" ? null : "symmetric")} aria-label="About symmetric bands">?</button>
+                    </span>
                     <button
-                      className={`toggle-switch ${symmetric ? "on" : ""}`}
-                      onClick={() => setSymmetric(!symmetric)}
-                      aria-label="Toggle symmetric bands"
+                      type="button"
+                      className="sym-btn"
+                      onClick={makeSymmetric}
+                      disabled={bandsAreSymmetric}
+                      aria-label="Make bands symmetric around target"
                     >
-                      <span className="toggle-knob" />
+                      {bandsAreSymmetric ? "Bands symmetric" : "Make symmetric"}
                     </button>
                   </div>
+                  {activeTip === "symmetric" && <p className="tip-text">{TIPS.symmetric}</p>}
                   <div className="field-row">
                     <Field
                       id="lowerBand"
