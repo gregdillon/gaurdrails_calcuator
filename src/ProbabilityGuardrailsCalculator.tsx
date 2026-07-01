@@ -317,6 +317,7 @@ type CalcResult = {
   dynamicSuccess: number;
   dynamicMedianSpend: number;
   bridgeOverrode: boolean;
+  bridgeFloorRestored: boolean;
 };
 
 type SensPoint = { withdrawal: number; success: number; current?: number };
@@ -473,6 +474,13 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       const zone = getZone(success, lb, ub, ew);
 
       let bridge: BridgeResult | null = null;
+      // The largest draw whose bridge survival still meets the floor (a right-sized cut),
+      // or null when the bridge isn't breached / isn't applicable. Computed inside the block
+      // below where the per-path simulator is in scope; consumed by the recommendation logic.
+      let bridgeCutTarget: number | null = null;
+      // False when even the deepest allowed cut (down to the spending floor) can't lift bridge
+      // survival back to the floor — spending alone isn't enough; claiming SS earlier is the remedy.
+      let bridgeFloorRestored = true;
       if (ssEnabled && num(ssClaimAge) > num(currentAge)) {
         const bridgeYears = num(ssClaimAge) - num(currentAge);
         const minBal = num(bridgeMinBalance, 0);
@@ -505,6 +513,34 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
             if (bal <= 0) { bal = 0; break; }
           }
           return bal;
+        };
+
+        // Governing bridge-survival % for an arbitrary annual draw (flex when dynamic, rigid
+        // otherwise) — matches surviveGov below, so the bisection is consistent with the number
+        // shown to the user.
+        const bridgeSurvivePct = (draw: number, trialsN: number) => {
+          let surv = 0;
+          for (let t = 0; t < trialsN; t++) {
+            const end = runBridge(draw, bridgeYears, dynamicMode);
+            if (end > 0 && end >= minBal) surv++;
+          }
+          return (surv / trialsN) * 100;
+        };
+
+        // Smallest cut (largest draw) that restores bridge survival to its floor. Survival is
+        // monotonically decreasing in the draw, so bisect between the spending floor and the
+        // current draw. Mirrors withdrawalForTargetSuccess.
+        const withdrawalForBridgeFloor = (floorPct: number) => {
+          let lo = Math.max(0, num(spendFloor, 0)); // never recommend below the floor
+          let hi = w;                                // never *raise* to fix the bridge
+          const searchTrials = Math.min(tr, 500);
+          for (let i = 0; i < 18; i++) {
+            const mid = (lo + hi) / 2;
+            // small buffer above the floor to absorb Monte Carlo noise
+            if (bridgeSurvivePct(mid, searchTrials) >= floorPct + 1) lo = mid;
+            else hi = mid;
+          }
+          return lo;
         };
 
         let surviveRigid = 0, surviveFlex = 0;
@@ -542,23 +578,32 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           surviveFlex: (surviveFlex / tr) * 100,
           median, p10, claimSensitivity,
         };
+
+        if (bridgeGuardrail && bridge.survive < num(bridgeFloor, 75)) {
+          bridgeCutTarget = withdrawalForBridgeFloor(num(bridgeFloor, 75));
+          // Did the right-sized cut actually clear the floor, or did it bottom out at the spending floor?
+          bridgeFloorRestored = bridgeSurvivePct(bridgeCutTarget, Math.min(tr, 500)) >= num(bridgeFloor, 75);
+        }
       }
 
+      // Full-plan recommendation (unchanged Guyton-Klinger logic, driven by `zone`).
+      const planExtended = zone === "extCut" || zone === "extRaise";
+      const planPct = planExtended ? eadj : adj;
+      let recommended = w;
+      if (zone === "cut" || zone === "extCut") recommended = w * (1 - planPct / 100);
+      else if (zone === "raise" || zone === "extRaise") recommended = w * (1 + planPct / 100);
+      else recommended = w * (1 + infl / 100);
+
+      // Bridge as a right-sized floor: take the more conservative of {plan cut, bridge cut}.
+      // Unlike the full-plan miss, the bridge cut is sized to exactly restore reserve odds to
+      // the floor rather than borrowing the full-strength 10%/20% adjustment.
       let finalZone = zone;
       let bridgeOverrode = false;
-      if (bridgeGuardrail && bridge && bridge.survive < num(bridgeFloor, 75)) {
-        const scoreOf = (z: string) => z === "extCut" ? -2 : z === "cut" ? -1 : z === "hold" ? 0 : z === "raise" ? 1 : 2;
-        const target = bridge.survive < num(bridgeFloor, 75) - ew ? "extCut" : "cut";
-        if (scoreOf(zone) > scoreOf(target)) { finalZone = target; bridgeOverrode = true; }
+      if (bridge && bridgeCutTarget != null && bridgeCutTarget < recommended) {
+        recommended = bridgeCutTarget;
+        bridgeOverrode = true;
+        finalZone = bridge.survive < num(bridgeFloor, 75) - ew ? "extCut" : "cut"; // color/label only
       }
-
-      const isExtended = finalZone === "extCut" || finalZone === "extRaise";
-      const pct = isExtended ? eadj : adj;
-
-      let recommended = w;
-      if (finalZone === "cut" || finalZone === "extCut") recommended = w * (1 - pct / 100);
-      else if (finalZone === "raise" || finalZone === "extRaise") recommended = w * (1 + pct / 100);
-      else recommended = w * (1 + infl / 100);
 
       let floorBound = false;
       if (dynamicMode) {
@@ -590,7 +635,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       const sustainable = withdrawalForTargetSuccess({ portfolio: p, years, retMean: r, retVol: v, trials: tr, targetSuccess: tgt, ssParams: simBase });
 
       setResult({
-        success, zone: finalZone, recommended, floorBound, successAfter, bridge, bridgeOverrode,
+        success, zone: finalZone, recommended, floorBound, successAfter, bridge, bridgeOverrode, bridgeFloorRestored,
         staticSuccess: staticRes.success,
         dynamicSuccess: dynRes.success,
         dynamicMedianSpend: dynRes.medianFinalSpend,
@@ -1608,7 +1653,9 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                     </div>
                     {result.bridgeOverrode && (
                       <p className="bridge-note" style={{ color: "#d97706", fontWeight: 600, marginTop: 8 }}>
-                        ⚠ Bridge reserve odds are below your {num(bridgeFloor, 75)}% floor — this overrode the main spending recommendation{result.zone === "extCut" ? " with a deeper cut" : ""}.
+                        ⚠ Bridge reserve odds are below your {num(bridgeFloor, 75)}% floor — spending was trimmed {Math.round((1 - result.recommended / num(withdrawal)) * 100)}% below your current draw{result.bridgeFloorRestored
+                          ? ", the minimum needed to restore it, rather than applying the standard cut."
+                          : ", the deepest cut allowed by your spending floor. That isn't enough to fully restore the reserve — consider claiming SS earlier (see below)."}
                       </p>
                     )}
                     {result.bridge.claimSensitivity.length > 0 && (
