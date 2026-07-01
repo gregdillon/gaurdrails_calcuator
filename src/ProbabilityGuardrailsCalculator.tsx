@@ -304,7 +304,6 @@ type BridgeResult = {
   median: number;
   p10: number;
   claimSensitivity: { claimAge: number; survive: number }[];
-  requiredCut: number;
 };
 
 type CalcResult = {
@@ -536,66 +535,29 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         }
 
         const surviveGov = dynamicMode ? surviveFlex : surviveRigid;
-        const survivePct = (surviveGov / tr) * 100;
-
-        // If the pre-SS reserve odds are below the floor, size the spending cut that would
-        // restore them — rather than borrowing the plan guardrail's fixed cut. runBridge is
-        // cheap and already parameterized by the starting draw, so we bisect on the cut
-        // fraction. Survival rises (approximately monotonically) as spending falls, so this
-        // finds the smallest cut that lifts bridge survival back to its floor.
-        let requiredCut = 0;
-        const bFloor = num(bridgeFloor, 75);
-        if (bridgeGuardrail && survivePct < bFloor) {
-          const bTrials = Math.min(tr, 800);
-          const surviveAt = (draw: number) => {
-            let s = 0;
-            for (let t = 0; t < bTrials; t++) {
-              const end = runBridge(draw, bridgeYears, dynamicMode);
-              if (end > 0 && end >= minBal) s++;
-            }
-            return (s / bTrials) * 100;
-          };
-          const capCut = 0.6; // never recommend cutting more than 60% of current spending
-          if (surviveAt(w * (1 - capCut)) < bFloor) {
-            requiredCut = capCut; // even the deepest allowed cut can't clear the floor
-          } else {
-            let lo = 0, hi = capCut;
-            for (let i = 0; i < 10; i++) {
-              const mid = (lo + hi) / 2;
-              if (surviveAt(w * (1 - mid)) >= bFloor) hi = mid; else lo = mid;
-            }
-            requiredCut = hi;
-          }
-          // Round up to a clean 0.5-point step so the recommendation isn't a ragged decimal.
-          requiredCut = Math.min(capCut, Math.ceil(requiredCut * 200) / 200);
-        }
-
         bridge = {
           years: bridgeYears, claimAge: num(ssClaimAge), minBalance: minBal,
-          survive: survivePct,
+          survive: (surviveGov / tr) * 100,
           surviveRigid: (surviveRigid / tr) * 100,
           surviveFlex: (surviveFlex / tr) * 100,
-          median, p10, claimSensitivity, requiredCut,
+          median, p10, claimSensitivity,
         };
       }
 
-      // Plan guardrail cut, expressed as a fraction of current spending.
-      let cutFrac = zone === "extCut" ? eadj / 100 : zone === "cut" ? adj / 100 : 0;
-
       let finalZone = zone;
       let bridgeOverrode = false;
-      // Bridge guardrail: if the bridge needs a deeper cut than the plan does, take the deeper
-      // one, so both the long-horizon ruin constraint and the pre-SS reserve constraint are met.
-      if (bridgeGuardrail && bridge && bridge.requiredCut > cutFrac) {
-        cutFrac = bridge.requiredCut;
-        bridgeOverrode = true;
-        finalZone = cutFrac > adj / 100 ? "extCut" : "cut";
+      if (bridgeGuardrail && bridge && bridge.survive < num(bridgeFloor, 75)) {
+        const scoreOf = (z: string) => z === "extCut" ? -2 : z === "cut" ? -1 : z === "hold" ? 0 : z === "raise" ? 1 : 2;
+        const target = bridge.survive < num(bridgeFloor, 75) - ew ? "extCut" : "cut";
+        if (scoreOf(zone) > scoreOf(target)) { finalZone = target; bridgeOverrode = true; }
       }
 
+      const isExtended = finalZone === "extCut" || finalZone === "extRaise";
+      const pct = isExtended ? eadj : adj;
+
       let recommended = w;
-      if (cutFrac > 0) recommended = w * (1 - cutFrac);
-      else if (finalZone === "raise") recommended = w * (1 + adj / 100);
-      else if (finalZone === "extRaise") recommended = w * (1 + eadj / 100);
+      if (finalZone === "cut" || finalZone === "extCut") recommended = w * (1 - pct / 100);
+      else if (finalZone === "raise" || finalZone === "extRaise") recommended = w * (1 + pct / 100);
       else recommended = w * (1 + infl / 100);
 
       let floorBound = false;
@@ -1646,7 +1608,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                     </div>
                     {result.bridgeOverrode && (
                       <p className="bridge-note" style={{ color: "#d97706", fontWeight: 600, marginTop: 8 }}>
-                        ⚠ Bridge reserve odds are below your {num(bridgeFloor, 75)}% floor — the spending cut was sized to {Math.round(result.bridge.requiredCut * 100)}% to restore the bridge to its floor, overriding the plan's smaller adjustment.
+                        ⚠ Bridge reserve odds are below your {num(bridgeFloor, 75)}% floor — this overrode the main spending recommendation{result.zone === "extCut" ? " with a deeper cut" : ""}.
                       </p>
                     )}
                     {result.bridge.claimSensitivity.length > 0 && (

@@ -24,10 +24,7 @@
       "Bash(node postSS_test2.mjs)",
       "PowerShell(npm run build 2>&1)",
       "Bash(node comprehensive.mjs)",
-      "Bash(node beforeafter.mjs)",
-      "PowerShell(npm run lint 2>&1)",
-      "PowerShell(npx tsc -b --noErrorTruncation 2>&1; Write-Output \"TSC_EXIT=$LASTEXITCODE\")",
-      "PowerShell(npx tsc -b 2>&1; Write-Output \"TSC_EXIT=$LASTEXITCODE\")"
+      "Bash(node beforeafter.mjs)"
     ]
   }
 }
