@@ -317,6 +317,7 @@ type CalcResult = {
   dynamicSuccess: number;
   dynamicMedianSpend: number;
   bridgeOverrode: boolean;
+  bridgeFloorRestored: boolean;
 };
 
 type SensPoint = { withdrawal: number; success: number; current?: number };
@@ -472,7 +473,24 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       const success = dynamicMode ? dynRes.success : staticRes.success;
       const zone = getZone(success, lb, ub, ew);
 
+      // Full-plan (Guyton-Klinger) recommendation, before any bridge constraint. A pure function
+      // of zone/adjustments — the bridge block below reads it to know how far up a proposed raise
+      // would go, so the bridge floor can cap the raise as well as deepen a cut.
+      const planExtended = zone === "extCut" || zone === "extRaise";
+      const planPct = planExtended ? eadj : adj;
+      let recommended = w;
+      if (zone === "cut" || zone === "extCut") recommended = w * (1 - planPct / 100);
+      else if (zone === "raise" || zone === "extRaise") recommended = w * (1 + planPct / 100);
+      else recommended = w * (1 + infl / 100);
+
       let bridge: BridgeResult | null = null;
+      // The largest draw whose bridge survival still meets the floor. Used two-sidedly: to
+      // right-size a cut when the bridge is already breached, AND to cap a raise/inflation bump
+      // that would push the bridge below its floor. null when the floor is met across the range.
+      let bridgeMaxDraw: number | null = null;
+      // False when even the deepest allowed cut (down to the spending floor) can't lift bridge
+      // survival back to the floor — spending alone isn't enough; claiming SS earlier is the remedy.
+      let bridgeFloorRestored = true;
       if (ssEnabled && num(ssClaimAge) > num(currentAge)) {
         const bridgeYears = num(ssClaimAge) - num(currentAge);
         const minBal = num(bridgeMinBalance, 0);
@@ -482,8 +500,29 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
         const hc = engineParams.haircut / 100;
         const bl = engineParams.blockLen;
 
+        // True while the reserve target is still auto-tracking the suggestion (the user hasn't
+        // typed a custom override). When tracking, the target should move with whatever draw is
+        // being tested rather than stay pinned to today's withdrawal — otherwise a raise is judged
+        // against a reserve requirement it will have already outgrown the moment it's taken, and a
+        // cut isn't credited for needing a smaller reserve too. Mirrors suggestedBridgeReserve above.
+        const isTrackingReserve = Math.abs(minBal - suggestedReserveRounded) < 500;
+        const reserveForDraw = (draw: number) => {
+          const postYrs = Math.max(0, num(endAge) - num(ssClaimAge));
+          if (postYrs <= 0) return 0;
+          const gap = Math.max(0, draw - (ssEnabled ? num(ssMonthly) * 12 : 0));
+          const realR = (r - infl) / 100;
+          return realR > 0.0001 ? gap * (1 - Math.pow(1 + realR, -postYrs)) / realR : gap * postYrs;
+        };
+        const minBalForDraw = (draw: number) => (isTrackingReserve ? reserveForDraw(draw) : minBal);
+
         const runBridge = (draw: number, byears: number, flex: boolean) => {
           let bal = p, bp = 0, bs = 0, spend = draw;
+          // Guardrail band re-anchored to the draw being tested, not the outer gkParams (fixed to
+          // today's withdrawal) — otherwise a lower candidate draw looks like underspending against
+          // bands sized for a higher one, the flex sim ratchets it back up, and a cut appears far
+          // less effective than it actually is.
+          const bandInit = p > 0 ? (draw / p) * 100 : 0;
+          const bandUpper = bandInit * 1.2, bandLower = bandInit * 0.8, bandExt = bandInit * 0.1;
           for (let y = 0; y < byears; y++) {
             let rr: number;
             if (useHist) {
@@ -495,16 +534,45 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
             }
             if (flex && bal > 0) {
               const cr = (spend / bal) * 100;
-              if (cr >= gkParams.gkUpper + gkParams.gkExtWidth) spend = spend * (1 - eadj / 100);
-              else if (cr >= gkParams.gkUpper) spend = spend * (1 - adj / 100);
-              else if (cr <= gkParams.gkLower - gkParams.gkExtWidth) spend = spend * (1 + eadj / 100);
-              else if (cr <= gkParams.gkLower) spend = spend * (1 + adj / 100);
+              if (cr >= bandUpper + bandExt) spend = spend * (1 - eadj / 100);
+              else if (cr >= bandUpper) spend = spend * (1 - adj / 100);
+              else if (cr <= bandLower - bandExt) spend = spend * (1 + eadj / 100);
+              else if (cr <= bandLower) spend = spend * (1 + adj / 100);
               if (spend < gkParams.spendFloor) spend = gkParams.spendFloor;
             }
             bal = bal * (1 + rr) - spend;
             if (bal <= 0) { bal = 0; break; }
           }
           return bal;
+        };
+
+        // Governing bridge-survival % for an arbitrary annual draw (flex when dynamic, rigid
+        // otherwise) — matches surviveGov below, so the bisection is consistent with the number
+        // shown to the user. Uses the goalpost-aware reserve target for the draw under test.
+        const bridgeSurvivePct = (draw: number, trialsN: number) => {
+          const mb = minBalForDraw(draw);
+          let surv = 0;
+          for (let t = 0; t < trialsN; t++) {
+            const end = runBridge(draw, bridgeYears, dynamicMode);
+            if (end > 0 && end >= mb) surv++;
+          }
+          return (surv / trialsN) * 100;
+        };
+
+        // Largest draw whose bridge survival still meets the floor. Survival is monotonically
+        // decreasing in the draw, so bisect between the spending floor and `hi`. `hi` defaults to
+        // the current draw (right-sizing a cut) but is raised to the plan's proposed draw when we
+        // need to cap a raise. Mirrors withdrawalForTargetSuccess.
+        const withdrawalForBridgeFloor = (floorPct: number, hi: number = w) => {
+          let lo = Math.max(0, num(spendFloor, 0)); // never recommend below the floor
+          const searchTrials = Math.min(tr, 500);
+          for (let i = 0; i < 18; i++) {
+            const mid = (lo + hi) / 2;
+            // small buffer above the floor to absorb Monte Carlo noise
+            if (bridgeSurvivePct(mid, searchTrials) >= floorPct + 1) lo = mid;
+            else hi = mid;
+          }
+          return lo;
         };
 
         let surviveRigid = 0, surviveFlex = 0;
@@ -542,23 +610,40 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
           surviveFlex: (surviveFlex / tr) * 100,
           median, p10, claimSensitivity,
         };
+
+        if (bridgeGuardrail) {
+          const floorPct = num(bridgeFloor, 75);
+          if (bridge.survive < floorPct) {
+            // (a) Bridge already breached at the current draw → right-size a cut. Gated on the
+            // low-noise governing figure (tr trials) so the decision doesn't hinge on a marginal
+            // point estimate. Searches [spendFloor, w] — never raising to fix a breach.
+            bridgeMaxDraw = withdrawalForBridgeFloor(floorPct);
+            bridgeFloorRestored = bridgeSurvivePct(bridgeMaxDraw, Math.min(tr, 500)) >= floorPct;
+          } else if (recommended > w && bridgeSurvivePct(recommended, tr) < floorPct) {
+            // (b) Bridge is fine at the current draw, but the full-plan raise/inflation bump would
+            // push it below the floor. Cap the increase at the largest draw that still meets the
+            // floor. Gate on tr trials to match the breach check's robustness.
+            bridgeMaxDraw = withdrawalForBridgeFloor(floorPct, recommended);
+            bridgeFloorRestored = bridgeSurvivePct(bridgeMaxDraw, Math.min(tr, 500)) >= floorPct;
+          }
+        }
       }
 
+      // Bridge as a two-sided floor on spending: never let the recommendation sit at a draw whose
+      // bridge survival is below the floor. This deepens a cut when the bridge is already breached
+      // and trims a raise/inflation bump that would breach it. The bridge target is right-sized to
+      // exactly restore reserve odds to the floor rather than borrowing the full-strength cut.
       let finalZone = zone;
       let bridgeOverrode = false;
-      if (bridgeGuardrail && bridge && bridge.survive < num(bridgeFloor, 75)) {
-        const scoreOf = (z: string) => z === "extCut" ? -2 : z === "cut" ? -1 : z === "hold" ? 0 : z === "raise" ? 1 : 2;
-        const target = bridge.survive < num(bridgeFloor, 75) - ew ? "extCut" : "cut";
-        if (scoreOf(zone) > scoreOf(target)) { finalZone = target; bridgeOverrode = true; }
+      if (bridge && bridgeMaxDraw != null && bridgeMaxDraw < recommended) {
+        recommended = bridgeMaxDraw;
+        bridgeOverrode = true;
+        // Color/label only: an actual reduction below the current draw is a cut; a merely *capped*
+        // raise (still at or above the current draw) is "on track — hold", not a cut.
+        finalZone = recommended < w
+          ? (bridge.survive < num(bridgeFloor, 75) - ew ? "extCut" : "cut")
+          : "hold";
       }
-
-      const isExtended = finalZone === "extCut" || finalZone === "extRaise";
-      const pct = isExtended ? eadj : adj;
-
-      let recommended = w;
-      if (finalZone === "cut" || finalZone === "extCut") recommended = w * (1 - pct / 100);
-      else if (finalZone === "raise" || finalZone === "extRaise") recommended = w * (1 + pct / 100);
-      else recommended = w * (1 + infl / 100);
 
       let floorBound = false;
       if (dynamicMode) {
@@ -590,7 +675,7 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
       const sustainable = withdrawalForTargetSuccess({ portfolio: p, years, retMean: r, retVol: v, trials: tr, targetSuccess: tgt, ssParams: simBase });
 
       setResult({
-        success, zone: finalZone, recommended, floorBound, successAfter, bridge, bridgeOverrode,
+        success, zone: finalZone, recommended, floorBound, successAfter, bridge, bridgeOverrode, bridgeFloorRestored,
         staticSuccess: staticRes.success,
         dynamicSuccess: dynRes.success,
         dynamicMedianSpend: dynRes.medianFinalSpend,
@@ -1607,9 +1692,17 @@ export default function ProbabilityGuardrailsCalculator({ onRegisterDataGetter }
                       <span className="result-stat-value">{fmtMoney(result.bridge.p10)}</span>
                     </div>
                     {result.bridgeOverrode && (
-                      <p className="bridge-note" style={{ color: "#d97706", fontWeight: 600, marginTop: 8 }}>
-                        ⚠ Bridge reserve odds are below your {num(bridgeFloor, 75)}% floor — this overrode the main spending recommendation{result.zone === "extCut" ? " with a deeper cut" : ""}.
-                      </p>
+                      result.recommended < num(withdrawal) ? (
+                        <p className="bridge-note" style={{ color: "#d97706", fontWeight: 600, marginTop: 8 }}>
+                          ⚠ Bridge reserve odds are below your {num(bridgeFloor, 75)}% floor — spending was trimmed {Math.round((1 - result.recommended / num(withdrawal)) * 100)}% below your current draw{result.bridgeFloorRestored
+                            ? ", the minimum needed to restore it, rather than applying the standard cut."
+                            : ", the deepest cut allowed by your spending floor. That isn't enough to fully restore the reserve — consider claiming SS earlier (see below)."}
+                        </p>
+                      ) : (
+                        <p className="bridge-note" style={{ color: "#d97706", fontWeight: 600, marginTop: 8 }}>
+                          ⚠ The full-plan guardrail would raise spending, but that would push your bridge reserve odds below your {num(bridgeFloor, 75)}% floor. The increase was limited to {fmtMoney(result.recommended)} — the most you can spend while keeping the reserve intact.
+                        </p>
+                      )
                     )}
                     {result.bridge.claimSensitivity.length > 0 && (
                       <div style={{ marginTop: 12 }}>

@@ -798,7 +798,7 @@ export default function App() {
           background: "#e8e8e8",
           padding: 3, borderRadius: 9,
         }}>
-          {(["rate", "probability"] as const).map(m => {
+          {(["probability", "rate"] as const).map(m => {
             const active = mode === m;
             return (
               <button

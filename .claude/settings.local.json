@@ -24,7 +24,8 @@
       "Bash(node postSS_test2.mjs)",
       "PowerShell(npm run build 2>&1)",
       "Bash(node comprehensive.mjs)",
-      "Bash(node beforeafter.mjs)"
+      "Bash(node beforeafter.mjs)",
+      "Bash(npm run *)"
     ]
   }
 }
